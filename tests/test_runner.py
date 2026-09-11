@@ -25,5 +25,8 @@ def test_run_one_marks_infeasible_over_budget_and_skips_agent():
     rec = run_one(Q, StubRetriever(["a", "b"], 999999), StubAgent(), budget=28000)
     assert rec["feasible"] is False
     assert rec["answer"] is None and rec["em"] is None
+    assert rec["answer_f1"] is None
+    assert rec["prompt_tokens"] is None
+    assert rec["completion_tokens"] is None
     assert rec["recall"] == 1.0                     # retrieval still scored
     assert rec["context_tokens"] == 999999          # projected cost recorded
