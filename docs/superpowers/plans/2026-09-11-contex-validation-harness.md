@@ -730,7 +730,7 @@ Expected: FAIL (`ModuleNotFoundError`).
 import asyncio
 import json
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 from .config import CONTEX_MCP_URL, CONTEX_PROJECT_ID
 
 class ContexClient:
@@ -739,7 +739,9 @@ class ContexClient:
         self.project_id = project_id
 
     async def _run(self, fn):
-        async with streamablehttp_client(self.url) as (read, write, _):
+        # mcp==2.0.0: streamable_http_client yields a 2-tuple (read, write).
+        # CONTEX_MCP_URL must be the real transport endpoint /mcp/mcp.
+        async with streamable_http_client(self.url) as (read, write):
             async with ClientSession(read, write) as s:
                 await s.initialize()
                 return await fn(s)
