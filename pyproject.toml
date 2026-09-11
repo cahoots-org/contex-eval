@@ -1,0 +1,12 @@
+[project]
+name = "contexeval"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "datasets", "mcp", "openai", "rank-bm25",
+  "sentence-transformers", "transformers", "numpy", "matplotlib",
+]
+[project.optional-dependencies]
+dev = ["pytest"]
+[tool.setuptools.packages.find]
+include = ["contexeval*"]
