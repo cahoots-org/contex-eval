@@ -28,6 +28,13 @@ from contexeval.report import aggregate, render_table, pr_curve
 # "no filtering" (returns the full top_k).  HIGH_TOPK (100) bounds the bundle in both modes.
 CONTEX_THRESHOLD = 0.0
 
+# Under hybrid search Contex ignores `threshold` (verified), so `top_k` is the ONLY knob
+# that bounds the returned bundle. It is therefore the effective retrieval budget: Contex
+# returns its top-`CONTEX_TOPK` hybrid-ranked paragraphs, and baselines use the same k.
+# (Set well below HIGH_TOPK=100, whose "high so the threshold bounds it" rationale does not
+# apply under hybrid.)
+CONTEX_TOPK = 10
+
 # Threshold sweep for the Contex PR curve.  Under hybrid search these points are all equivalent
 # (threshold is ignored, all return the same results).  Under vector-only mode these are
 # cosine-similarity cutoffs that produce meaningful trade-off points on the PR curve.
@@ -47,8 +54,9 @@ def main(n: int, mode: str):
     client = ContexClient()
     client.publish_corpus(corpus)  # publish once
 
-    # Contex at RRF-safe threshold; measure average bundle size B.
-    contex = ContexRetriever(corpus, client, threshold=CONTEX_THRESHOLD)
+    # Contex bounded by CONTEX_TOPK (the effective retrieval budget under hybrid); measure
+    # average bundle size B and set the baseline k to match, per the fair-comparison protocol.
+    contex = ContexRetriever(corpus, client, threshold=CONTEX_THRESHOLD, top_k=CONTEX_TOPK)
     sizes = [contex.retrieve(q["question"]).bundle_size for q in questions]
     B = max(1, round(sum(sizes) / len(sizes)))
     print(f"Contex avg bundle size B={B}; setting baseline k={B}")
@@ -66,13 +74,13 @@ def main(n: int, mode: str):
     (config.DATA_DIR / "report.md").write_text(table + "\n")
     print(table)
 
-    # PR curve: sweep Contex thresholds (RRF-scale) and baseline k for BM25/dense.
+    # PR curve: under hybrid the Contex threshold is a no-op, so the meaningful knob is top_k.
+    # Sweep the SAME k values for all three ranked methods (contex/bm25/dense) → comparable curves.
     sweeps = {}
-    ks = sorted({max(1, round(B * m)) for m in (0.5, 1, 2, 4)})
-    for t in CONTEX_THRESHOLDS:
-        recs = [_run_one_safe(q, ContexRetriever(corpus, client, threshold=t)) for q in questions]
-        sweeps.setdefault("contex", []).append(_avg_pr(recs))
+    ks = sorted({max(1, round(CONTEX_TOPK * m)) for m in (0.5, 1, 2, 4)})
     for k in ks:
+        crecs = [_run_one_safe(q, ContexRetriever(corpus, client, threshold=CONTEX_THRESHOLD, top_k=k)) for q in questions]
+        sweeps.setdefault("contex", []).append(_avg_pr(crecs))
         for name, R in (("bm25", BM25Retriever), ("dense", DenseRetriever)):
             recs = [_run_one_safe(q, R(corpus, k=k)) for q in questions]
             sweeps.setdefault(name, []).append(_avg_pr(recs))
