@@ -2,12 +2,23 @@ from dataclasses import dataclass
 from openai import OpenAI
 from .config import AGENT_BASE_URL, AGENT_MODEL
 
+SYSTEM = (
+    "You are a precise question-answering assistant. "
+    "Answer the question using ONLY the provided context. "
+    "Reply with the shortest exact span or phrase that answers the question. "
+    "For yes/no questions, reply with exactly 'yes' or 'no'. "
+    "Do not explain, do not add extra words."
+)
+
 
 def build_prompt(context_text: str, question: str) -> list[dict]:
     """Build a chat-format prompt with context and question."""
     return [
-        {"role": "system", "content": "You are a helpful assistant. Answer the question based on the provided context."},
-        {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {question}"},
+        {"role": "system", "content": SYSTEM},
+        {
+            "role": "user",
+            "content": f"Context:\n{context_text}\n\nQuestion: {question}\nAnswer:",
+        },
     ]
 
 
@@ -30,6 +41,7 @@ class AnswerAgent:
                 model=self.model,
                 messages=[{"role": "user", "content": "Hi."}],
                 max_tokens=1,
+                temperature=0,
             )
         except Exception:
             pass  # Server may not be up; warmup is optional
@@ -40,7 +52,8 @@ class AnswerAgent:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=prompt,
-            max_tokens=100,
+            temperature=0,
+            max_tokens=256,
         )
         return AnswerResult(
             text=response.choices[0].message.content.strip(),
