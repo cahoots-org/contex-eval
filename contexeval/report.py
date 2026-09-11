@@ -23,7 +23,7 @@ def aggregate(records: list[dict]) -> dict[str, dict]:
     return out
 
 def render_table(agg: dict) -> str:
-    cols = ["recall", "precision", "f1", "em", "answer_f1", "bundle_size", "context_tokens", "feasible_n", "total_n"]
+    cols = ["recall", "precision", "f1", "em", "answer_f1", "bundle_size", "context_tokens", "completion_tokens", "feasible_n", "total_n"]
     lines = ["| method | " + " | ".join(cols) + " |",
              "|" + "---|" * (len(cols) + 1)]
     for method, row in sorted(agg.items()):

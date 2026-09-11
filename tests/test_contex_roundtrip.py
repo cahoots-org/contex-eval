@@ -21,4 +21,6 @@ def test_publish_and_query_maps_back_to_para_ids():
     ids = {pid for pid, _ in hits}
     assert ids <= {p["para_id"] for p in PARAS}          # only known ids, cleanly mapped
     assert "scott-joplin" in ids                          # relevant gold surfaced
-    assert all(0.0 <= sim <= 1.0 for _, sim in hits)
+    # Under hybrid search the threshold arg is a no-op; similarities are small RRF scores
+    # (~0.016 = 1/(RRF_K+1)), not cosine values.  Assert they are strictly positive (non-zero).
+    assert all(sim > 0 for _, sim in hits)

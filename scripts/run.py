@@ -1,9 +1,15 @@
 """Pilot/full run: prep -> publish -> measure Contex bundle size -> set baseline k -> run -> report.
 
-RRF score note: Contex runs with hybrid search enabled, so `contex_query` returns Reciprocal-Rank-
-Fusion (RRF) fused similarity values (~0.016 = 1/(60+1)), NOT cosine similarity in [0,1].
-Setting CONTEX_THRESHOLD=0.0 lets all matches through; HIGH_TOPK (100) bounds the bundle.
-For the PR sweep we use RRF-scale thresholds: [0.0, 0.005, 0.01, 0.02, 0.05].
+RRF score note: Contex runs with hybrid search enabled (HYBRID_SEARCH_ENABLED=true), so
+`contex_query` returns Reciprocal-Rank-Fusion (RRF) fused similarity values (~0.016 = 1/(60+1)),
+NOT cosine similarity in [0,1].
+
+IMPORTANT: under hybrid search, the `threshold` parameter passed to `contex_query` is a NO-OP —
+Contex ignores it entirely (verified: identical results at thresholds 0.0 through 0.9).  Only
+`top_k` bounds the returned bundle.  CONTEX_THRESHOLD and CONTEX_THRESHOLDS below therefore have
+NO EFFECT on Contex's output when running in the default hybrid mode.  They only take effect if
+Contex is run in vector-only mode (HYBRID_SEARCH_ENABLED=false), where the cosine
+similarity >= threshold filter is applied.
 """
 import json
 import sys
@@ -17,11 +23,14 @@ from contexeval.agent import AnswerAgent
 from contexeval.runner import run
 from contexeval.report import aggregate, render_table, pr_curve
 
-# Contex uses RRF similarity (~0.016 per match); cosine-oriented thresholds (e.g. 0.5) would
-# filter out ALL results.  Use 0.0 here so HIGH_TOPK (100) bounds the bundle instead.
+# Under hybrid search (default), the threshold arg is ignored by Contex — it is a no-op.
+# 0.0 is kept here for clarity and for compatibility with vector-only mode, where it means
+# "no filtering" (returns the full top_k).  HIGH_TOPK (100) bounds the bundle in both modes.
 CONTEX_THRESHOLD = 0.0
 
-# RRF-scale thresholds for the Contex PR sweep
+# Threshold sweep for the Contex PR curve.  Under hybrid search these points are all equivalent
+# (threshold is ignored, all return the same results).  Under vector-only mode these are
+# cosine-similarity cutoffs that produce meaningful trade-off points on the PR curve.
 CONTEX_THRESHOLDS = [0.0, 0.005, 0.01, 0.02, 0.05]
 
 

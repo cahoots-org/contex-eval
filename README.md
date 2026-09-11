@@ -85,30 +85,41 @@ It is retained in the printed/written table as a theoretical upper-bound referen
 
 ---
 
-## Known finding: hybrid RRF scores and threshold calibration
+## Known finding: hybrid RRF scores and threshold behaviour
 
-Contex runs with `HYBRID_SEARCH_ENABLED=true`, which fuses its BM25 and dense rankings via
-**Reciprocal-Rank Fusion (RRF)**.  The `similarity` values `contex_query` returns are therefore
-**RRF fused scores**, roughly `1 / (RRF_K + rank)` with `RRF_K = 60` — so the top match scores
-about `1 / (60 + 1) ≈ 0.016`, NOT a cosine similarity in `[0, 1]`.
+Contex runs with `HYBRID_SEARCH_ENABLED=true` by default, which fuses its BM25 and dense
+rankings via **Reciprocal-Rank Fusion (RRF)**.  The `similarity` values `contex_query` returns
+are therefore **RRF fused scores**, roughly `1 / (RRF_K + rank)` with `RRF_K = 60` — so the
+top match scores about `1 / (60 + 1) ≈ 0.016`, NOT a cosine similarity in `[0, 1]`.
 
-**Consequences (must be handled, or the run looks degenerate):**
+**Critical empirical finding: under hybrid search, the `threshold` parameter is ignored.**
 
-- Cosine-style thresholds (the plan's `DEFAULT_THRESHOLD = 0.5`, or anything in `0.3`–`0.7`)
-  filter out **every** RRF match, making Contex appear to return nothing.
-- `scripts/run.py` therefore uses a module-level `CONTEX_THRESHOLD = 0.0`.  **A threshold of
-  0.0 applies no filtering — it returns the ENTIRE pool (bounded only by `HIGH_TOPK = 100`).**
-  That is useful as a **recall ceiling**, but it is explicitly NOT a "lean," discriminating
-  Contex bundle.
-- A lean, discriminating bundle requires an **operating threshold inside the RRF band
-  (~`0.009`–`0.016`)**.  Because RRF scores depend on rank and pool size, the right operating
-  point is **corpus-size dependent** and must be chosen **empirically from the PR-curve sweep** —
-  it should not be hardcoded.  The sweep list
-  `CONTEX_THRESHOLDS = [0.0, 0.005, 0.01, 0.02, 0.05]` brackets that band so the PR curve
-  exposes the knee.
+Live testing queried Contex at thresholds 0.0, 0.1, 0.3, 0.5, and 0.9.  Every threshold
+returned the identical set of matches with identical RRF similarities (~0.016).  The reason:
+Contex's cosine `similarity >= threshold` filter only runs in the pure-vector code path; the
+RRF/hybrid path bypasses it entirely.  Only `top_k` bounds the returned bundle.
 
-To pick an operating threshold, read the `similarity` distribution in `data/results.jsonl` and
-the knee of `data/pr_curve.png` for the corpus size you actually ran.
+**Consequences for experiment design:**
+
+- The spec's premise that "Contex auto-sizes the returned bundle via its similarity threshold"
+  does **NOT** hold under hybrid search.  With the threshold a no-op, Contex behaves like
+  fixed-`top_k` retrieval, and the Contex threshold-sweep / PR curve is degenerate — all sweep
+  points are identical.
+- `scripts/run.py` uses `CONTEX_THRESHOLD = 0.0` and `CONTEX_THRESHOLDS = [0.0, 0.005, 0.01,
+  0.02, 0.05]`.  Under hybrid search these constants have no effect on Contex's results; only
+  `HIGH_TOPK = 100` bounds the bundle.  The sweep is retained for completeness and for use in
+  vector-only mode.
+
+**Key experiment-design decision for operators:**
+
+| Mode | `threshold` effect | Auto-sizing | Lexical (FTS) half |
+|------|--------------------|-------------|-------------------|
+| `HYBRID_SEARCH_ENABLED=true` (default) | **ignored** — no-op | No — fixed `top_k` | Yes |
+| `HYBRID_SEARCH_ENABLED=false` (vector-only) | **applied** — cosine ≥ threshold | Yes | No |
+
+To exercise true threshold-based auto-sizing (cosine `similarity >= threshold`), run Contex in
+**vector-only mode** (`HYBRID_SEARCH_ENABLED=false`).  This enables the threshold filter at the
+cost of dropping the lexical/FTS half of Contex's hybrid retrieval.
 
 ---
 

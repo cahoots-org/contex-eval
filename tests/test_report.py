@@ -21,3 +21,4 @@ def test_aggregate_means_and_feasibility():
 def test_render_table_has_rows():
     table = render_table(aggregate(RECORDS))
     assert "contex" in table and "dump-all" in table and "|" in table
+    assert "completion_tokens" in table  # cost column must appear (generation tokens)
