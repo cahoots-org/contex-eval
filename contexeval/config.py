@@ -9,7 +9,7 @@ AGENT_MODEL = "mlx-community/Qwen2.5-7B-Instruct-4bit"
 AGENT_BASE_URL = "http://127.0.0.1:8080/v1"
 TOKENIZER_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
-CONTEX_MCP_URL = "http://127.0.0.1:8001/mcp"
+CONTEX_MCP_URL = "http://127.0.0.1:8001/mcp/mcp"
 CONTEX_PROJECT_ID = "hotpotqa"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 
