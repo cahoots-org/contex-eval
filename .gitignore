@@ -7,3 +7,4 @@ data/cache/
 results/
 .DS_Store
 contex/
+*.egg-info/
