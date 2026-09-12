@@ -7,7 +7,7 @@ data/cache/
 data/*.jsonl
 data/report.md
 data/pr_curve.png
-results/
+/results/
 .DS_Store
 contex/
 *.egg-info/
