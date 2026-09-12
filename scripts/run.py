@@ -79,11 +79,13 @@ def main(n: int, mode: str):
     sweeps = {}
     ks = sorted({max(1, round(CONTEX_TOPK * m)) for m in (0.5, 1, 2, 4)})
     for k in ks:
-        crecs = [_run_one_safe(q, ContexRetriever(corpus, client, threshold=CONTEX_THRESHOLD, top_k=k)) for q in questions]
-        sweeps.setdefault("contex", []).append(_avg_pr(crecs))
-        for name, R in (("bm25", BM25Retriever), ("dense", DenseRetriever)):
-            recs = [_run_one_safe(q, R(corpus, k=k)) for q in questions]
-            sweeps.setdefault(name, []).append(_avg_pr(recs))
+        # Build each retriever ONCE per k (not per question) — DenseRetriever encodes the whole
+        # corpus in __init__, so per-question construction re-encodes it needlessly.
+        cx = ContexRetriever(corpus, client, threshold=CONTEX_THRESHOLD, top_k=k)
+        bm = BM25Retriever(corpus, k=k)
+        dn = DenseRetriever(corpus, k=k)
+        for name, r in (("contex", cx), ("bm25", bm), ("dense", dn)):
+            sweeps.setdefault(name, []).append(_avg_pr([_run_one_safe(q, r) for q in questions]))
     pr_curve(sweeps, config.DATA_DIR / "pr_curve.png")
     print("wrote data/report.md and data/pr_curve.png")
 
