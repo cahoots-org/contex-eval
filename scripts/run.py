@@ -33,7 +33,7 @@ CONTEX_THRESHOLD = 0.0
 # returns its top-`CONTEX_TOPK` hybrid-ranked paragraphs, and baselines use the same k.
 # (Set well below HIGH_TOPK=100, whose "high so the threshold bounds it" rationale does not
 # apply under hybrid.)
-CONTEX_TOPK = 10
+CONTEX_TOPK = 5
 
 # Threshold sweep for the Contex PR curve.  Under hybrid search these points are all equivalent
 # (threshold is ignored, all return the same results).  Under vector-only mode these are
