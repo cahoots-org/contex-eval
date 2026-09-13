@@ -96,3 +96,34 @@ terms, neutralizing the lexical half for multi-word queries, so the shipped hybr
 change Contex's FTS query construction to BM25-style / OR partial matching** (a code change in
 `src/core/lexical_search.py`), not a parameter tune. This is a concrete, independently-surfaced bug in
 Contex — arguably the most actionable output of the whole validation.
+
+## Re-eval on Contex v0.2.x (2026-09-13): the OR fix is necessary but insufficient
+
+Contex shipped the fix for #138 (OR the `plainto_tsquery` lexemes, exactly as suggested). Re-ran the
+SAME SciFact setup (identical 5,183-doc index — reused via the DB volume, only the FTS *query* changed;
+300 queries, k=10, hybrid). Result — the fix did **not** deliver the simulated hybrid win, and slightly
+regressed recall + cost:
+
+| method | recall@10 | context tokens | vs prior |
+|---|---|---|---|
+| contex (v0.2.x, OR fix) | **0.768** | **4,640** | was 0.792 / 3,314 (broken AND) |
+| bm25 | 0.776 | 3,525 | — |
+| dense | 0.783 | 3,349 | — |
+
+Paired bootstrap: contex−dense = **−0.015 [−0.043, +0.013]** (tie, W/T/L 8/275/17); contex−bm25 =
+−0.007 [−0.052, +0.037]. So Contex still ties dense — now marginally *below*, and ~40% more expensive.
+
+**Why (confirmed):** the OR query now matches **2,920 / 1,999 of 5,183** docs for sample queries (vs 0
+under AND) — i.e. it matches ~half the corpus on any shared common term. Postgres `ts_rank_cd` ranks
+that broad set weakly (no real IDF weighting), so RRF fusion of dense + noisy-lexical *displaces* good
+dense hits (recall ↓) and pulls in longer docs (cost ↑).
+
+**Reconciliation with the earlier simulation.** Our simulated "correct hybrid" hit 0.824 using
+**rank-bm25** as the lexical retriever (proper BM25/IDF ranking). Contex fuses using `ts_rank_cd` over a
+plain OR match. Same RRF, same dense — the only difference is the lexical **ranker**, so the ranker is
+decisively the bottleneck: AND→OR fixed *which docs match*, but not *how well they're ranked*.
+
+**Recommendation (follow-up to #138):** the minimal OR fix stops the silent degrade-to-vector-only, but
+to realize the hybrid gain Contex needs a real BM25 ranker (e.g. ParadeDB `pg_search`/`pg_bm25`) or an
+IDF-weighted / min-should-match lexical query — not `ts_rank_cd` over a broad OR. This was flagged as the
+"more thorough option" in the original report; the SciFact re-eval now shows it's the *necessary* one.
