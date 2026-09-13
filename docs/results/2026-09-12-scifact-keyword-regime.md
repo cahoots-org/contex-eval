@@ -61,3 +61,38 @@ Two public benchmarks tying is already strong evidence that retrieval ranking is
 python -m contexeval.prep_beir scifact test          # 5183 docs, 300 test queries
 python scripts/run_beir.py 10 scifact-full           # publish + recall@10 + bootstrap CIs
 ```
+
+## Follow-up: Contex's hybrid ties dense because of an FTS bug (not "hybrid can't help")
+
+Prompted by the question "isn't this just a hybrid-tuning problem?", we dug deeper. It is a
+Contex-implementation problem — and a working hybrid *does* win here.
+
+**1. Complementary signal exists.** Oracle union (gold in BM25-top-10 ∪ dense-top-10) = **0.873**
+recall vs 0.79 for either alone (+0.08 headroom). BM25 rescues 24 dense misses; dense rescues 23
+BM25 misses (of 300). So there is real lexical signal a hybrid could add.
+
+**2. Contex's FTS returns almost nothing on multi-term queries.** Contex builds its lexical query
+with `plainto_tsquery('english', query)`, which **AND's every term** (`src/core/lexical_search.py`).
+Verified against the live `scifact-full` project: single terms match fine (`to_tsquery('cell')` →
+2,529 docs), but full-sentence SciFact claims match **0–1 docs** (all terms required). So the lexical
+half contributes ~nothing and the "hybrid" collapses to dense-only — exactly matching the 287/300
+Contex≈dense ties. The one hybrid knob Contex exposes (`RRF_K`) cannot fix this: RRF only reorders the
+candidate union; it cannot add candidates FTS never returned.
+
+**3. A correct hybrid wins.** Simulating Contex's own RRF fusion (`rrf_fuse`, k=60) but feeding it a
+real partial-match lexical retriever (`rank-bm25`) instead of the AND-broken FTS:
+
+| method | recall@10 |
+|---|---|
+| dense | 0.783 |
+| bm25 | 0.776 |
+| RRF(bm25, dense) | **0.824** |
+
+Paired bootstrap: **RRF-hybrid − dense = +0.041, 95% CI [+0.003, +0.080] (excludes 0), W/T/L 25/259/16.**
+
+**Conclusion.** Contex's hybrid *design* is sound — a correctly-implemented version beats dense on
+SciFact, significantly. Its *implementation* has a real defect: `plainto_tsquery` requires all query
+terms, neutralizing the lexical half for multi-word queries, so the shipped hybrid ties dense. **Fix =
+change Contex's FTS query construction to BM25-style / OR partial matching** (a code change in
+`src/core/lexical_search.py`), not a parameter tune. This is a concrete, independently-surfaced bug in
+Contex — arguably the most actionable output of the whole validation.
