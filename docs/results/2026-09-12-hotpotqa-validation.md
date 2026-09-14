@@ -4,6 +4,8 @@
 **Harness:** this repo (`contexeval`), spec `docs/superpowers/specs/2026-09-11-contex-validation-harness-design.md`.
 **TL;DR:** Lean retrieval beats dumping the whole pool **decisively** (cost + feasibility). On HotpotQA specifically, **Contex is statistically tied with a plain dense retriever** and only modestly ahead of BM25 (not firmly significant). The retrieval-quality result is dataset-shaped: HotpotQA is semantic/multi-hop, which favors the dense half of Contex's hybrid.
 
+> **UPDATE (2026-09-14):** the "tie with dense" throughout this doc's original body was the **broken-FTS era** (`plainto_tsquery` AND-matched ~nothing, so Contex's "hybrid" was silently dense-only). With **Contex v0.2.5 (ParadeDB BM25)**, Contex **significantly beats dense here too** — recall@5 **0.830 vs 0.767, 95% CI [+0.027, +0.103] (excludes 0)**. See the "Re-eval on Contex v0.2.5" section at the end. The original body is kept for the chronological bug→fix record.
+
 ## Setup
 
 - **Benchmark:** HotpotQA distractor, validation split (7,405 questions), sampled with fixed `SEED=13`. Paragraphs pooled across sampled questions into one shared corpus (dedup by title slug) — each question is a `need` against the *full* pool, not just its own 10 paragraphs.
