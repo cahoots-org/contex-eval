@@ -127,3 +127,37 @@ decisively the bottleneck: AND→OR fixed *which docs match*, but not *how well 
 to realize the hybrid gain Contex needs a real BM25 ranker (e.g. ParadeDB `pg_search`/`pg_bm25`) or an
 IDF-weighted / min-should-match lexical query — not `ts_rank_cd` over a broad OR. This was flagged as the
 "more thorough option" in the original report; the SciFact re-eval now shows it's the *necessary* one.
+
+## Re-eval on Contex v0.2.5 (ParadeDB / pg_search BM25) — the hybrid win lands
+
+v0.2.5 switched Contex's lexical retriever to **ParadeDB pg_search BM25** (`paradedb.score` via the
+`@@@` operator over `description`/`data_original`), replacing `ts_rank_cd`. Fresh DB, re-published the
+same SciFact corpus (5,183 docs) so the BM25 index is built over it; same 300 queries, k=10, hybrid.
+
+| method | recall@10 | context tokens |
+|---|---|---|
+| **contex (ParadeDB BM25)** | **0.841** | 3,421 |
+| dense | 0.783 | 3,349 |
+| bm25 (rank-bm25 baseline) | 0.776 | 3,525 |
+
+Paired bootstrap (10k resamples):
+- **contex − dense = +0.058, 95% CI [+0.024, +0.092] — excludes 0** (W/T/L 25/266/9)
+- **contex − bm25  = +0.065, 95% CI [+0.033, +0.100] — excludes 0** (W/T/L 28/267/5)
+
+**Contex's hybrid now significantly beats both pure dense and pure keyword**, at comparable token cost —
+and it exceeded the `RRF(rank-bm25, dense) = 0.824` simulation (0.841), i.e. ParadeDB's BM25 + Contex's
+RRF fusion did even better than the rank-bm25 proxy predicted.
+
+### The full arc (why this is the Contex-specific validation)
+
+| Contex version | lexical retriever | recall@10 | vs dense (95% CI) |
+|---|---|---|---|
+| original (as first tested) | `plainto_tsquery` (AND all terms → matched ~0) | 0.792 | tie |
+| v0.2.x (#138 fix) | OR'd `plainto_tsquery` + `ts_rank_cd` (matched ~½ corpus, weak rank) | 0.768 | tie / slightly below |
+| **v0.2.5** | **ParadeDB `pg_search` BM25** | **0.841** | **+0.058 (excludes 0)** |
+
+This is the retrieval-quality result that *is* Contex-specific: with a real BM25 ranker fused into its
+hybrid, Contex measurably and significantly out-retrieves both a strong dense baseline (same embeddings)
+and pure BM25 on a public benchmark — the thing neither the broken-AND nor the OR-`ts_rank_cd` versions
+could do. The validation harness drove the whole loop: measure → surface the FTS bug (#138) → the OR fix
+proved insufficient → ParadeDB BM25 → significant, reproducible hybrid win.
