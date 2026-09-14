@@ -171,9 +171,10 @@ the OR fix proved insufficient → ParadeDB BM25 → significant, reproducible h
 - **The dense baseline is deliberately modest — and it is Contex's own embedder.** `dense` =
   `all-MiniLM-L6-v2` (384-dim, 2021). This is not a hand-picked weak baseline to flatter Contex; it is the
   embedder Contex actually ships, so `contex − dense` isolates fusion gain *at Contex's real operating
-  point*. **Open question (see the embedder ablation):** hybrid/BM25 gains typically shrink as the dense
-  model improves — does this win survive a modern SOTA embedder (bge-large / e5 / gte)? (It often survives
-  on lexical/entity/OOD queries, which is this datasets' shape — but it must be measured, not assumed.)
+  point*. **⚠️ ANSWERED by the embedder ablation (`2026-09-14-embedder-ablation.md`): the win does NOT
+  survive a modern embedder.** A 2023 model (bge-base) *alone* significantly beats this hybrid
+  (−0.050, CI excludes 0); the win documented above holds only against Contex's weak MiniLM embedder. The
+  highest-leverage retrieval change for Contex is upgrading the embedder, not the hybrid.
 - **Regime note.** SciFact here is the **full 5,183-doc BEIR corpus** (no subsampling). The HotpotQA
   companion result runs the **distractor-pool** regime (paragraphs pooled across sampled questions) —
   standard for HotpotQA but not the full-wiki corpus, and at a different `k` / #-gold-per-query. Both are

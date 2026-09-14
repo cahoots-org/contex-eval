@@ -102,6 +102,8 @@ lexical and a semantic dataset.
 
 **Effect-size honesty:** the win is *reliable*, not *dominant* — here it rides on ~23 flipped queries of
 150 (W/T/L 23/121/6, ~15%); the other ~80% are identical to dense. And the `dense` baseline is
-`all-MiniLM-L6-v2` — Contex's own (modest, 2021) embedder, which isolates fusion gain at Contex's real
-operating point but leaves open whether the gain survives a modern SOTA embedder (see the embedder
-ablation). See the SciFact doc's "Honest caveats & effect size" for the full framing.
+`all-MiniLM-L6-v2` — Contex's own (modest, 2021) embedder. **⚠️ The embedder ablation
+(`2026-09-14-embedder-ablation.md`) answers the "does it survive a modern embedder?" question: NO.** A
+2023 model (bge-base) alone significantly beats Contex's hybrid here too (−0.090, CI excludes 0), and
+even an upgraded hybrid loses to modern-dense-alone (−0.037). This win holds only against Contex's weak
+embedder. See the SciFact doc's "Honest caveats & effect size" for the full framing.
