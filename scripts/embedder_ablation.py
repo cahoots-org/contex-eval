@@ -19,6 +19,7 @@ Usage:  PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/embedder_ablation.py <k> <l
 """
 import json
 import random
+import os
 import sys
 
 import numpy as np
@@ -32,6 +33,7 @@ STRONG_MODEL = "BAAI/bge-large-en-v1.5"
 BGE_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 RRF_K = 60
 TOPN = 50  # candidate depth per retriever before fusion / truncation
+_DEVICE = os.getenv("CONTEXEVAL_DEVICE") or None  # e.g. "cpu" or "mps"; None = auto
 
 
 def rrf(rankings, k=RRF_K):
@@ -71,8 +73,8 @@ def main(k, label):
 
     bm = BM25Retriever(corpus, k=TOPN)
     bm_rank = [bm.retrieve(q["question"]).para_ids for q in qs]
-    mini_rank = dense_rankings(SentenceTransformer("all-MiniLM-L6-v2"), corpus, qs)
-    strong_rank = dense_rankings(SentenceTransformer(STRONG_MODEL), corpus, qs,
+    mini_rank = dense_rankings(SentenceTransformer("all-MiniLM-L6-v2", device=_DEVICE), corpus, qs)
+    strong_rank = dense_rankings(SentenceTransformer(STRONG_MODEL, device=_DEVICE), corpus, qs,
                                  query_instruction=BGE_QUERY_INSTRUCTION)
 
     def recall(rankings):
