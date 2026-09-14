@@ -99,3 +99,9 @@ data" was a symptom of the same bug, not a property of the data.
 pure dense (same embeddings) and pure BM25 on BOTH public benchmarks — SciFact (+0.058) and HotpotQA
 (+0.063), both 95% CIs excluding 0. This is the Contex-specific retrieval win, and it is robust across a
 lexical and a semantic dataset.
+
+**Effect-size honesty:** the win is *reliable*, not *dominant* — here it rides on ~23 flipped queries of
+150 (W/T/L 23/121/6, ~15%); the other ~80% are identical to dense. And the `dense` baseline is
+`all-MiniLM-L6-v2` — Contex's own (modest, 2021) embedder, which isolates fusion gain at Contex's real
+operating point but leaves open whether the gain survives a modern SOTA embedder (see the embedder
+ablation). See the SciFact doc's "Honest caveats & effect size" for the full framing.

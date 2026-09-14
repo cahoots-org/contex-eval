@@ -157,7 +157,24 @@ RRF fusion did even better than the rank-bm25 proxy predicted.
 | **v0.2.5** | **ParadeDB `pg_search` BM25** | **0.841** | **+0.058 (excludes 0)** |
 
 This is the retrieval-quality result that *is* Contex-specific: with a real BM25 ranker fused into its
-hybrid, Contex measurably and significantly out-retrieves both a strong dense baseline (same embeddings)
-and pure BM25 on a public benchmark — the thing neither the broken-AND nor the OR-`ts_rank_cd` versions
-could do. The validation harness drove the whole loop: measure → surface the FTS bug (#138) → the OR fix
-proved insufficient → ParadeDB BM25 → significant, reproducible hybrid win.
+hybrid, Contex measurably and significantly out-retrieves both the dense baseline (Contex's own
+embeddings) and pure BM25 on a public benchmark — the thing neither the broken-AND nor the OR-`ts_rank_cd`
+versions could do. The validation harness drove the whole loop: measure → surface the FTS bug (#138) →
+the OR fix proved insufficient → ParadeDB BM25 → significant, reproducible hybrid win.
+
+## Honest caveats & effect size (read before quoting the number)
+
+- **"Significant" ≠ "dominant."** The win is *reliable* but *narrow in reach*: ~266/300 queries are
+  identical to dense; the effect rides on ~25 flipped queries (~8%). "+0.058 recall@10" is a true, clean
+  number — it means "reliably better on the minority of queries where lexical signal exists," not "beats
+  dense across the board." The CIs justify *significant*, not *dominant*.
+- **The dense baseline is deliberately modest — and it is Contex's own embedder.** `dense` =
+  `all-MiniLM-L6-v2` (384-dim, 2021). This is not a hand-picked weak baseline to flatter Contex; it is the
+  embedder Contex actually ships, so `contex − dense` isolates fusion gain *at Contex's real operating
+  point*. **Open question (see the embedder ablation):** hybrid/BM25 gains typically shrink as the dense
+  model improves — does this win survive a modern SOTA embedder (bge-large / e5 / gte)? (It often survives
+  on lexical/entity/OOD queries, which is this datasets' shape — but it must be measured, not assumed.)
+- **Regime note.** SciFact here is the **full 5,183-doc BEIR corpus** (no subsampling). The HotpotQA
+  companion result runs the **distractor-pool** regime (paragraphs pooled across sampled questions) —
+  standard for HotpotQA but not the full-wiki corpus, and at a different `k` / #-gold-per-query. Both are
+  defensible; the two datasets are *not* identical setups, so "two public benchmarks" ≠ "one protocol."
