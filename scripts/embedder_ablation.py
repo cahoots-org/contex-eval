@@ -14,7 +14,8 @@ Key questions (paired bootstrap CIs):
   2. hybrid_minilm - dense_strong: does Contex's *cheap* hybrid still beat a *strong* dense model?
   3. hybrid_strong - dense_strong: does fusion STILL help once the dense side is strong?
 
-Usage:  python scripts/embedder_ablation.py <k> <label>
+Usage:  PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/embedder_ablation.py <k> <label>
+(Set PYTORCH_ENABLE_MPS_FALLBACK=1 on Apple Silicon — bge-large hangs on MPS without it.)
 """
 import json
 import random
@@ -70,8 +71,8 @@ def main(k, label):
 
     bm = BM25Retriever(corpus, k=TOPN)
     bm_rank = [bm.retrieve(q["question"]).para_ids for q in qs]
-    mini_rank = dense_rankings(SentenceTransformer("all-MiniLM-L6-v2", device="cpu"), corpus, qs)
-    strong_rank = dense_rankings(SentenceTransformer(STRONG_MODEL, device="cpu"), corpus, qs,
+    mini_rank = dense_rankings(SentenceTransformer("all-MiniLM-L6-v2"), corpus, qs)
+    strong_rank = dense_rankings(SentenceTransformer(STRONG_MODEL), corpus, qs,
                                  query_instruction=BGE_QUERY_INSTRUCTION)
 
     def recall(rankings):
