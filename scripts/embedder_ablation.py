@@ -70,8 +70,8 @@ def main(k, label):
 
     bm = BM25Retriever(corpus, k=TOPN)
     bm_rank = [bm.retrieve(q["question"]).para_ids for q in qs]
-    mini_rank = dense_rankings(SentenceTransformer("all-MiniLM-L6-v2"), corpus, qs)
-    strong_rank = dense_rankings(SentenceTransformer(STRONG_MODEL), corpus, qs,
+    mini_rank = dense_rankings(SentenceTransformer("all-MiniLM-L6-v2", device="cpu"), corpus, qs)
+    strong_rank = dense_rankings(SentenceTransformer(STRONG_MODEL, device="cpu"), corpus, qs,
                                  query_instruction=BGE_QUERY_INSTRUCTION)
 
     def recall(rankings):
