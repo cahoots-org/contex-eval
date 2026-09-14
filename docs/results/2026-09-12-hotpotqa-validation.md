@@ -72,3 +72,28 @@ python scripts/analyze.py           # paired bootstrap CIs from data/results.jso
 ```
 
 Raw records for this run: `results_n150.jsonl`. Environment/workarounds documented in the top-level `README.md`.
+
+## Re-eval on Contex v0.2.5 (ParadeDB BM25), retrieval-only — also a significant win
+
+Re-ran HotpotQA (same n=150, k=5, fresh `hotpot-paradedb` project) against Contex v0.2.5 (ParadeDB
+`pg_search` BM25), retrieval-only (recall@5 + paired bootstrap):
+
+| method | recall@5 | context tokens |
+|---|---|---|
+| **contex (ParadeDB)** | **0.830** | 668 |
+| dense | 0.767 | 647 |
+| bm25 | 0.723 | 652 |
+
+- **contex − dense = +0.063, 95% CI [+0.027, +0.103]** — excludes 0 (W/T/L 23/121/6)
+- **contex − bm25  = +0.107, 95% CI [+0.060, +0.153]** — excludes 0 (W/T/L 38/102/10)
+
+The earlier HotpotQA run had Contex at 0.770 ≈ dense 0.767 (a *tie*) — but that was the broken-FTS
+version (`plainto_tsquery` AND-matched ~nothing), so the "hybrid" was silently dense-only. HotpotQA's
+entity-heavy multi-hop questions (names, titles, places) DO carry lexical signal, so once ParadeDB BM25
+is fused in, Contex jumps 0.770 → 0.830 and **significantly beats dense**. The prior "tie on semantic
+data" was a symptom of the same bug, not a property of the data.
+
+**Cross-dataset conclusion:** with a real BM25 ranker, Contex's hybrid significantly out-retrieves both
+pure dense (same embeddings) and pure BM25 on BOTH public benchmarks — SciFact (+0.058) and HotpotQA
+(+0.063), both 95% CIs excluding 0. This is the Contex-specific retrieval win, and it is robust across a
+lexical and a semantic dataset.
