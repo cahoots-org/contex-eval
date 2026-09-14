@@ -1,0 +1,108 @@
+"""Pilot/full run: prep -> publish -> measure Contex bundle size -> set baseline k -> run -> report.
+
+RRF score note: Contex runs with hybrid search enabled (HYBRID_SEARCH_ENABLED=true), so
+`contex_query` returns Reciprocal-Rank-Fusion (RRF) fused similarity values (~0.016 = 1/(60+1)),
+NOT cosine similarity in [0,1].
+
+IMPORTANT: under hybrid search, the `threshold` parameter passed to `contex_query` is a NO-OP —
+Contex ignores it entirely (verified: identical results at thresholds 0.0 through 0.9).  Only
+`top_k` bounds the returned bundle.  CONTEX_THRESHOLD and CONTEX_THRESHOLDS below therefore have
+NO EFFECT on Contex's output when running in the default hybrid mode.  They only take effect if
+Contex is run in vector-only mode (HYBRID_SEARCH_ENABLED=false), where the cosine
+similarity >= threshold filter is applied.
+"""
+import json
+import sys
+from contexeval import config, prep
+from contexeval.contex_client import ContexClient
+from contexeval.retrievers.contex import ContexRetriever
+from contexeval.retrievers.dumpall import DumpAllRetriever
+from contexeval.retrievers.bm25 import BM25Retriever
+from contexeval.retrievers.dense import DenseRetriever
+from contexeval.agent import AnswerAgent
+from contexeval.runner import run
+from contexeval.report import aggregate, render_table, pr_curve
+
+# Under hybrid search (default), the threshold arg is ignored by Contex — it is a no-op.
+# 0.0 is kept here for clarity and for compatibility with vector-only mode, where it means
+# "no filtering" (returns the full top_k).  HIGH_TOPK (100) bounds the bundle in both modes.
+CONTEX_THRESHOLD = 0.0
+
+# Under hybrid search Contex ignores `threshold` (verified), so `top_k` is the ONLY knob
+# that bounds the returned bundle. It is therefore the effective retrieval budget: Contex
+# returns its top-`CONTEX_TOPK` hybrid-ranked paragraphs, and baselines use the same k.
+# (Set well below HIGH_TOPK=100, whose "high so the threshold bounds it" rationale does not
+# apply under hybrid.)
+CONTEX_TOPK = 5
+
+# Threshold sweep for the Contex PR curve.  Under hybrid search these points are all equivalent
+# (threshold is ignored, all return the same results).  Under vector-only mode these are
+# cosine-similarity cutoffs that produce meaningful trade-off points on the PR curve.
+CONTEX_THRESHOLDS = [0.0, 0.005, 0.01, 0.02, 0.05]
+
+
+def load_jsonl(path):
+    with open(path) as f:
+        return [json.loads(line) for line in f]
+
+
+def main(n: int, mode: str):
+    prep.main(n)  # writes corpus.jsonl + questions.jsonl
+    corpus = load_jsonl(config.CORPUS_PATH)
+    questions = load_jsonl(config.QUESTIONS_PATH)
+
+    client = ContexClient()
+    client.publish_corpus(corpus)  # publish once
+
+    # Contex bounded by CONTEX_TOPK (the effective retrieval budget under hybrid); measure
+    # average bundle size B and set the baseline k to match, per the fair-comparison protocol.
+    contex = ContexRetriever(corpus, client, threshold=CONTEX_THRESHOLD, top_k=CONTEX_TOPK)
+    sizes = [contex.retrieve(q["question"]).bundle_size for q in questions]
+    B = max(1, round(sum(sizes) / len(sizes)))
+    print(f"Contex avg bundle size B={B}; setting baseline k={B}")
+
+    retrievers = [contex, BM25Retriever(corpus, k=B), DenseRetriever(corpus, k=B)]
+    if mode == "pilot":
+        retrievers.append(DumpAllRetriever(corpus))  # full dump-all only when it fits
+
+    agent = AnswerAgent()
+    agent.warmup()
+    records = run(questions, retrievers, agent, config.RESULTS_PATH)
+
+    agg = aggregate(records)
+    table = render_table(agg)
+    (config.DATA_DIR / "report.md").write_text(table + "\n")
+    print(table)
+
+    # PR curve: under hybrid the Contex threshold is a no-op, so the meaningful knob is top_k.
+    # Sweep the SAME k values for all three ranked methods (contex/bm25/dense) → comparable curves.
+    sweeps = {}
+    ks = sorted({max(1, round(CONTEX_TOPK * m)) for m in (0.5, 1, 2, 4)})
+    for k in ks:
+        # Build each retriever ONCE per k (not per question) — DenseRetriever encodes the whole
+        # corpus in __init__, so per-question construction re-encodes it needlessly.
+        cx = ContexRetriever(corpus, client, threshold=CONTEX_THRESHOLD, top_k=k)
+        bm = BM25Retriever(corpus, k=k)
+        dn = DenseRetriever(corpus, k=k)
+        for name, r in (("contex", cx), ("bm25", bm), ("dense", dn)):
+            sweeps.setdefault(name, []).append(_avg_pr([_run_one_safe(q, r) for q in questions]))
+    pr_curve(sweeps, config.DATA_DIR / "pr_curve.png")
+    print("wrote data/report.md and data/pr_curve.png")
+
+
+def _run_one_safe(q, retriever):
+    from contexeval.scoring.retrieval import retrieval_prf
+    res = retriever.retrieve(q["question"])
+    return retrieval_prf(res.para_ids, q["gold_para_ids"])
+
+
+def _avg_pr(prf_list):
+    rec = sum(r for _, r, _ in prf_list) / len(prf_list)
+    prec = sum(p for p, _, _ in prf_list) / len(prf_list)
+    return (rec, prec)
+
+
+if __name__ == "__main__":
+    n = int(sys.argv[1]) if len(sys.argv) > 1 else 50
+    mode = sys.argv[2] if len(sys.argv) > 2 else "pilot"  # "pilot" | "full"
+    main(n, mode)

@@ -1,0 +1,17 @@
+[project]
+name = "contexeval"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "datasets", "mcp==2.0.0", "openai", "rank-bm25",
+  # Latest stable stack (verified working together): sentence-transformers 6.x needs
+  # transformers >=5; mlx-lm also wants transformers 5.x, so they agree.
+  "sentence-transformers>=6", "transformers>=5",
+  "numpy", "matplotlib",
+  # NOTE: do NOT install torchvision — the transitively-pulled version mismatches the
+  # installed torch (torchvision::nms ABI error) and this harness does not need it.
+]
+[project.optional-dependencies]
+dev = ["pytest"]
+[tool.setuptools.packages.find]
+include = ["contexeval*"]

@@ -4,5 +4,10 @@ __pycache__/
 .venv/
 venv/
 data/cache/
-results/
+data/*.jsonl
+data/report.md
+data/pr_curve.png
+/results/
 .DS_Store
+contex/
+*.egg-info/
