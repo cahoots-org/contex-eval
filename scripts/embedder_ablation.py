@@ -49,11 +49,13 @@ def dense_rankings(model, corpus, questions, query_instruction=""):
     doc_emb = model.encode([c["title"] + " " + c["text"] for c in corpus],
                            normalize_embeddings=True, convert_to_numpy=True,
                            batch_size=64, show_progress_bar=False)
+    q_emb = model.encode([query_instruction + q["question"] for q in questions],
+                         normalize_embeddings=True, convert_to_numpy=True,
+                         batch_size=64, show_progress_bar=False)
+    sims = q_emb @ doc_emb.T                       # (num_queries, num_docs)
     out = []
-    for q in questions:
-        qe = model.encode([query_instruction + q["question"]],
-                          normalize_embeddings=True, convert_to_numpy=True)[0]
-        order = np.argsort(-(doc_emb @ qe))[:TOPN]
+    for row in sims:
+        order = np.argsort(-row)[:TOPN]
         out.append([ids[i] for i in order])
     return out
 
