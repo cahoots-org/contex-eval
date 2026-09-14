@@ -5,7 +5,7 @@ Local retrieval comparison (no Contex needed) on data/corpus.jsonl + data/questi
   bm25                    rank-bm25 (a conservative BM25 proxy; actual ParadeDB Contex
                           slightly *exceeded* RRF(rank-bm25, dense) in our runs)
   dense_minilm            all-MiniLM-L6-v2  (Contex's shipped embedder, 384-dim, 2021)
-  dense_strong            BAAI/bge-large-en-v1.5  (1024-dim, strong modern embedder)
+  dense_strong            BAAI/bge-base-en-v1.5  (768-dim, strong modern embedder; bge-large too slow on CPU)
   hybrid_minilm           RRF(bm25, dense_minilm)   ~ Contex today
   hybrid_strong           RRF(bm25, dense_strong)   ~ Contex if it upgraded its embedder
 
@@ -15,7 +15,7 @@ Key questions (paired bootstrap CIs):
   3. hybrid_strong - dense_strong: does fusion STILL help once the dense side is strong?
 
 Usage:  PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/embedder_ablation.py <k> <label>
-(Set PYTORCH_ENABLE_MPS_FALLBACK=1 on Apple Silicon — bge-large hangs on MPS without it.)
+(Set PYTORCH_ENABLE_MPS_FALLBACK=1 on Apple Silicon — bge-large hangs on MPS; bge-base used on CPU for speed.)
 """
 import json
 import random
@@ -28,7 +28,7 @@ from sentence_transformers import SentenceTransformer
 from contexeval.retrievers.bm25 import BM25Retriever
 from contexeval.scoring.retrieval import retrieval_prf
 
-STRONG_MODEL = "BAAI/bge-large-en-v1.5"
+STRONG_MODEL = "BAAI/bge-base-en-v1.5"
 # bge-*-en-v1.5 retrieval convention: instruct the QUERY, leave documents bare.
 BGE_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 RRF_K = 60
@@ -85,7 +85,7 @@ def main(k, label):
     methods = {
         "bm25": recall(bm_rank),
         "dense_minilm": recall(mini_rank),
-        "dense_strong(bge-large)": recall(strong_rank),
+        "dense_strong(bge-base)": recall(strong_rank),
         "hybrid_minilm(~contex now)": recall([rrf([b, m]) for b, m in zip(bm_rank, mini_rank)]),
         "hybrid_strong(~contex upgraded)": recall([rrf([b, s]) for b, s in zip(bm_rank, strong_rank)]),
     }
@@ -104,9 +104,9 @@ def main(k, label):
         print(f"  {a}  -  {b}:  {mean:+.3f}  95%CI[{lo:+.3f},{hi:+.3f}]  W/T/L={w}/{n-w-l}/{l}{sig}")
 
     print("  -- key comparisons --")
-    compare("dense_strong(bge-large)", "dense_minilm")
-    compare("hybrid_minilm(~contex now)", "dense_strong(bge-large)")
-    compare("hybrid_strong(~contex upgraded)", "dense_strong(bge-large)")
+    compare("dense_strong(bge-base)", "dense_minilm")
+    compare("hybrid_minilm(~contex now)", "dense_strong(bge-base)")
+    compare("hybrid_strong(~contex upgraded)", "dense_strong(bge-base)")
 
 
 if __name__ == "__main__":
