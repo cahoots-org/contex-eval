@@ -23,7 +23,7 @@ class ContexClient:
         # CallToolResult.content is a list of content blocks; the tool returns one text block.
         return result.content[0].text
 
-    def publish_corpus(self, paragraphs: list[dict], batch_size: int = 500) -> None:
+    def publish_corpus(self, paragraphs: list[dict], batch_size: int = 100) -> None:
         # contex_publish_batch: single contex_publish is rate-limited (60/min) since Contex v1.
         async def _pub(s):
             for i in range(0, len(paragraphs), batch_size):
