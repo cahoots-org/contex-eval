@@ -1,165 +1,146 @@
 # contexeval — Contex retrieval benchmark harness
 
-End-to-end evaluation of four retrieval methods (Contex, BM25, Dense, Dump-All) on HotpotQA
-distractor questions, with an mlx-lm answer agent, paragraph-level P/R/F1 + EM/F1 scoring,
-and a precision-recall curve comparing methods at equal context budgets.
+Measures whether [Contex](https://github.com/cahoots-org/contex)'s hybrid retrieval (BM25 + dense, RRF
+fusion) beats plain baselines on public benchmarks with independent labels. Methods compared on the
+same corpus at the same retrieval budget `k`:
 
----
+- `contex`: Contex over MCP, `HYBRID_SEARCH_ENABLED=true`
+- `dense`: sentence-transformers cosine top-k, using the same embedder Contex runs
+- `bm25`: `rank-bm25` top-k
+- `dump-all`: the whole pool (HotpotQA only; a recall ceiling and cost reference)
+
+## Current findings
+
+| Setup | Benchmark | contex | dense | contex − dense (95% CI) |
+|---|---|---|---|---|
+| Contex v0.2.5 (ParadeDB BM25), MiniLM embedder | SciFact recall@10 | 0.841 | 0.783 | +0.058 [+0.024, +0.092] |
+| Contex v0.2.5 (ParadeDB BM25), MiniLM embedder | HotpotQA recall@5 | 0.830 | 0.767 | +0.063 [+0.027, +0.103] |
+| Contex v0.2.5, **gte-base** embedder | SciFact recall@10 | 0.879 | 0.890 | −0.011 [−0.041, +0.018] (tie) |
+
+1. With Contex's shipped embedder (`all-MiniLM-L6-v2`), the hybrid beats dense significantly on both
+   benchmarks. The gain comes from the 8–15% of queries where the hybrid wins. Most queries come back identical.
+2. With a modern embedder the advantage disappears. Swapping the embedder lifts dense recall by 9–11
+   points, which is far more than fusion adds. Fusing BM25 into a strong dense retriever ties it at
+   best and hurts it slightly at worst.
+3. Lean retrieval beats dumping the pool on cost and feasibility: dump-all averages about 215k context
+   tokens on HotpotQA n=150 and does not fit the 28k budget for any question.
+4. Hybrid search ignores the `threshold` parameter. Only `top_k` bounds the bundle (see below).
+
+Full write-ups, newest first:
+
+- [`2026-09-15-contex-gtebase-real.md`](docs/results/2026-09-15-contex-gtebase-real.md): real Contex reconfigured to gte-base
+- [`2026-09-14-embedder-ablation.md`](docs/results/2026-09-14-embedder-ablation.md): does the hybrid win survive a modern embedder? (no)
+- [`2026-09-12-scifact-keyword-regime.md`](docs/results/2026-09-12-scifact-keyword-regime.md): SciFact across Contex versions (broken FTS → OR fix → ParadeDB)
+- [`2026-09-12-hotpotqa-validation.md`](docs/results/2026-09-12-hotpotqa-validation.md): HotpotQA with an agent in the loop (EM/F1, cost)
+- [`contex-hybrid-fts-bug.md`](docs/contex-hybrid-fts-bug.md): the upstream `plainto_tsquery` bug report
+
+Open items: HotpotQA with real Contex(gte-base) has not been run yet (the publish takes hours), and
+neither has an RRF weighting sweep.
 
 ## Setup
 
-### 1. Install Python dependencies
-
 ```bash
 pip install -e ".[dev]"
-pip install mlx-lm        # for the local answer agent
+pip install mlx-lm        # only for the HotpotQA answer agent
 ```
 
-### 2. Start Contex via the vendored checkout
-
-The repo includes a patched Contex checkout at `./contex/`.
+Contex runs from a local checkout at `./contex/` (gitignored, cloned from upstream):
 
 ```bash
-cd contex
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
-cd ..
+cd contex && docker compose -f docker-compose.yml -f docker-compose.override.yml up -d && cd ..
+curl -s http://127.0.0.1:8001/health      # {"status":"ok"}
 ```
 
-Verify health (should return `{"status":"ok"}`):
+The override sets `AUTH_ENABLED=false`, `CONTEX_PROTECTED_MODE=false` and `HYBRID_SEARCH_ENABLED=true`,
+and publishes only port 8001. The harness talks MCP at `http://127.0.0.1:8001/mcp` (`contexeval/config.py`).
 
-```bash
-curl -s http://127.0.0.1:8001/health
-```
+The checkout carries local patches for the gte-base run: the embedder and `embedding_dim` in
+`src/core/semantic_matcher.py`, `Vector(768)` in `src/core/db_models.py` and migration 001, and a
+native arm64 app build in the `Dockerfile`. Postgres stays amd64. Revert these with `git -C contex diff`
+to get stock Contex (MiniLM, 384-dim). The embedder has to match `EMBED_MODEL` in `config.py`; otherwise
+`dense` no longer isolates what fusion adds.
 
-Confirm settings in the compose override:
-- `AUTH_ENABLED=false` (or `CONTEX_PROTECTED_MODE=false`)
-- `HYBRID_SEARCH_ENABLED=true`
+## Running
 
-The MCP endpoint is exposed at `http://127.0.0.1:8001/mcp/mcp`.
+### HotpotQA, agent in the loop (`scripts/run.py`)
 
-### 3. Start the mlx-lm answer agent
+Start the answer agent first:
 
 ```bash
 mlx_lm.server --model mlx-community/Qwen2.5-7B-Instruct-4bit --port 8080
 ```
 
-Wait until the server prints that it is ready before running the harness.
-
----
-
-## Running the benchmark
-
-### Pilot run (50 questions, all four methods including Dump-All)
-
 ```bash
-python scripts/run.py 50 pilot
+python scripts/run.py 50 pilot     # includes dump-all; its recall must be 1.000
+python scripts/run.py 150 full     # dump-all omitted from the agent loop
+python scripts/analyze.py          # paired bootstrap CIs, contex vs each baseline
 ```
 
-Writes `data/report.md` (markdown table) and `data/pr_curve.png`.
+Writes `data/results.jsonl`, `data/report.md` and `data/pr_curve.png`.
 
-**Sanity check:** the `dump-all` row in the table should have `recall = 1.000`.  If it does not,
-stop and debug `contexeval/prep.py` or `contexeval/scoring/retrieval.py` before scaling.
+### BEIR, retrieval only (`scripts/run_beir.py`)
 
-### Full run (200 questions; Dump-All omitted — infeasible at scale)
+BEIR provides relevance labels but no gold answers, so this script scores recall@k and context tokens
+and skips the agent.
 
 ```bash
-python scripts/run.py 200 full
+python -m contexeval.prep_beir scifact test                  # full corpus, all test queries
+python scripts/run_beir.py 10 scifact                        # k=10, publishes to project 'scifact'
+python scripts/run_beir.py 10 scifact nopublish              # reuse an already-published project
 ```
 
-`DumpAllRetriever` is excluded in `full` mode because the resulting context (all pooled
-paragraphs) exceeds the 28 k-token `CONTEXT_BUDGET`, making it infeasible for the agent.
-It is retained in the printed/written table as a theoretical upper-bound reference only.
+### Embedder ablation (`scripts/embedder_ablation.py`)
 
----
+Runs locally and does not need Contex. It compares BM25, MiniLM dense, bge-base dense, and
+`RRF(bm25, dense)` for each embedder, on whatever is in `data/corpus.jsonl` and `data/questions.jsonl`.
 
-## Scoring methodology
+```bash
+CONTEXEVAL_DEVICE=cpu python scripts/embedder_ablation.py 10 scifact
+```
 
-- **Unit:** paragraph (slug-keyed by Wikipedia title, de-duplicated across questions).
-- **Pooling:** all paragraphs from all distractor contexts are pooled into a shared corpus;
-  gold paragraphs are taken from `supporting_facts`. Paragraphs that appear in a question's
-  distractor set but not in `supporting_facts` are treated as negatives — this is an honest
-  (conservative) recall denominator.
-- **Retrieval:** precision, recall, F1 over the paragraph set.
-- **Answer:** exact-match (EM) and token-overlap F1 against the dataset answer string, scored
-  only on feasible (within-budget) contexts.
+`CONTEXEVAL_DEVICE` (`cpu` / `mps` / unset for auto) pins the sentence-transformers device for both
+the ablation and the `dense` retriever. Large BERT models can hang on Apple MPS, in which case use `cpu`.
 
----
+### Tests
 
-## Known finding: hybrid RRF scores and threshold behaviour
+```bash
+pytest                    # offline unit tests
+pytest -m integration     # needs live Contex (and mlx-lm for agent tests)
+```
 
-Contex runs with `HYBRID_SEARCH_ENABLED=true` by default, which fuses its BM25 and dense
-rankings via **Reciprocal-Rank Fusion (RRF)**.  The `similarity` values `contex_query` returns
-are therefore **RRF fused scores**, roughly `1 / (RRF_K + rank)` with `RRF_K = 60` — so the
-top match scores about `1 / (60 + 1) ≈ 0.016`, NOT a cosine similarity in `[0, 1]`.
+## Methodology
 
-**Critical empirical finding: under hybrid search, the `threshold` parameter is ignored.**
+- **Fair comparison:** every method gets the same corpus, the same queries and the same `k`. `dense`
+  uses Contex's own embedder, so `contex − dense` measures exactly what BM25 + RRF adds.
+- **HotpotQA pooling:** distractor paragraphs from all sampled questions go into one shared corpus
+  (deduplicated by title), and each question searches the whole pool. Gold paragraphs come from
+  `supporting_facts`. Unlabelled pool paragraphs count as negatives, which is conservative for precision.
+- **Scoring:** paragraph-level recall/precision/F1; answers use the official HotpotQA EM/F1
+  normalisation and are scored only when the context fits the budget. Cost is context plus generation
+  tokens.
+- **Significance:** paired bootstrap over queries, 10k resamples, seeded. A gap counts as significant
+  only when its 95% CI excludes 0. Win/tie/loss counts are reported alongside.
+- **Agent:** `Qwen2.5-7B-Instruct-4bit` via mlx-lm at temperature 0. EM/F1 reflect retrieval and
+  model capability together.
 
-Live testing queried Contex at thresholds 0.0, 0.1, 0.3, 0.5, and 0.9.  Every threshold
-returned the identical set of matches with identical RRF similarities (~0.016).  The reason:
-Contex's cosine `similarity >= threshold` filter only runs in the pure-vector code path; the
-RRF/hybrid path bypasses it entirely.  Only `top_k` bounds the returned bundle.
+## Hybrid search ignores `threshold`
 
-**Consequences for experiment design:**
+Under `HYBRID_SEARCH_ENABLED=true`, Contex's returned `similarity` values are RRF scores (about
+`1/(60+rank)`, so roughly 0.016 at the top), not cosine similarities, and the `similarity >= threshold`
+filter only runs on the vector-only path. Thresholds from 0.0 to 0.9 return identical results, so
+`top_k` is the effective retrieval budget and the Contex PR-curve sweep is flat. To exercise
+threshold-based sizing, run Contex with `HYBRID_SEARCH_ENABLED=false`, which drops the lexical half.
 
-- The spec's premise that "Contex auto-sizes the returned bundle via its similarity threshold"
-  does **NOT** hold under hybrid search.  With the threshold a no-op, Contex behaves like
-  fixed-`top_k` retrieval, and the Contex threshold-sweep / PR curve is degenerate — all sweep
-  points are identical.
-- `scripts/run.py` uses `CONTEX_THRESHOLD = 0.0` and `CONTEX_THRESHOLDS = [0.0, 0.005, 0.01,
-  0.02, 0.05]`.  Under hybrid search these constants have no effect on Contex's results; only
-  `HIGH_TOPK = 100` bounds the bundle.  The sweep is retained for completeness and for use in
-  vector-only mode.
+## Hardware notes (Apple Silicon)
 
-**Key experiment-design decision for operators:**
+- The stock Contex images are `linux/amd64` and run emulated. Publishing with gte-base under emulation
+  ran at about 2.5 docs/min; a native arm64 app build ran at about 22 docs/min. HNSW inserts on the
+  emulated Postgres still slow down as the index grows, and a full SciFact publish took about 5 hours.
+- mlx-lm serves one request at a time. A 6.5k-token prompt takes around 2 minutes.
 
-| Mode | `threshold` effect | Auto-sizing | Lexical (FTS) half |
-|------|--------------------|-------------|-------------------|
-| `HYBRID_SEARCH_ENABLED=true` (default) | **ignored** — no-op | No — fixed `top_k` | Yes |
-| `HYBRID_SEARCH_ENABLED=false` (vector-only) | **applied** — cosine ≥ threshold | Yes | No |
+## Limitations
 
-To exercise true threshold-based auto-sizing (cosine `similarity >= threshold`), run Contex in
-**vector-only mode** (`HYBRID_SEARCH_ENABLED=false`).  This enables the threshold filter at the
-cost of dropping the lexical/FTS half of Contex's hybrid retrieval.
-
----
-
-## Hardware / performance caveat
-
-This harness was validated on Apple Silicon, where two factors make full runs slow:
-
-- **Contex under emulation:** the vendored Contex docker images are `linux/amd64` and run under
-  emulation on Apple Silicon, so its database and embedding steps are noticeably slower than
-  native.
-- **Sequential local LLM:** the mlx 7B server serves requests **one at a time** and
-  prompt-processes large contexts slowly.  A ~6.5k-token `dump-all` prompt takes roughly
-  **~2 minutes**; at real pilot scale `dump-all` prompts approach the 28k-token `CONTEXT_BUDGET`
-  and take considerably longer.
-
-Plan pilots accordingly: budget patience, use a smaller model (e.g. `Qwen2.5-3B-Instruct-4bit`),
-and/or reduce the number of questions that exercise `dump-all`.
-
----
-
-## Local Contex workaround notes
-
-The vendored `contex/` checkout includes two local patches required to run it:
-
-1. **Shadowed `auth_enabled` variable in `main.py`** — a local variable shadowed the
-   `AUTH_ENABLED` config flag, causing startup to crash when auth was disabled.  The patch
-   renames the local variable; see `contex/main.py`.
-
-2. **`docker-compose.override.yml`** — sets `CONTEX_PROTECTED_MODE=false` (disables auth
-   token checks) and leaves PostgreSQL and Redis host ports unpublished to avoid conflicts
-   with other local services.  The only published port is `8001` (Contex HTTP/MCP).
-
----
-
-## Disclosed limitations
-
-- **Unlabelled negatives:** HotpotQA distractor paragraphs that appear in the pooled corpus
-  but are not in `supporting_facts` are treated as negatives.  A retriever that returns them
-  is penalised in precision even if they are factually relevant.
-- **Scale:** at 200+ questions the pooled corpus can exceed 3 000 paragraphs.  `DumpAllRetriever`
-  is excluded from the agent loop in `full` mode for this reason.
-- **Single local agent:** all four methods are evaluated with the same mlx-lm Qwen 2.5 7B
-  model at temperature 0.  EM/F1 scores reflect retrieval quality + model capability jointly.
+- Unlabelled HotpotQA pool paragraphs count as negatives even when they are relevant.
+- Each configuration is a single run. Confidence comes from the bootstrap over queries, not from
+  repeated runs.
+- The gte-base result covers SciFact only so far.

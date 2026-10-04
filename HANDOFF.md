@@ -1,5 +1,7 @@
 # Contex Validation Harness — "Does lean context actually win?"
 
+> **Historical (2026-09-11 kickoff brief).** Current setup and findings are in `README.md` and `docs/results/`.
+
 A research/validation project for [Contex](https://github.com/) (the OSS semantic context bus). Handoff brief — written to be picked up cold in a fresh session.
 
 > **What this is (locked):** A small, credible benchmark harness that measures whether Contex actually delivers on its core promise. Not a toy, not a demo — a real validation with numbers. The [Code Youngstown](https://www.meetup.com/code-youngstown/) lightning talk is the *milestone/forcing function*, **not** the deliverable. The deliverable is the metrics. If the numbers are good, they become the talk's closing punch ("here's the pain, here's Contex, and here's the data proving it helps").
