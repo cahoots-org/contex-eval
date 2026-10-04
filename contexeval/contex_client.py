@@ -23,15 +23,20 @@ class ContexClient:
         # CallToolResult.content is a list of content blocks; the tool returns one text block.
         return result.content[0].text
 
-    def publish_corpus(self, paragraphs: list[dict]) -> None:
+    def publish_corpus(self, paragraphs: list[dict], batch_size: int = 500) -> None:
+        # contex_publish_batch: single contex_publish is rate-limited (60/min) since Contex v1.
         async def _pub(s):
-            for p in paragraphs:
-                await s.call_tool("contex_publish", {
+            for i in range(0, len(paragraphs), batch_size):
+                r = await s.call_tool("contex_publish_batch", {
                     "project_id": self.project_id,
-                    "data_key": p["para_id"],
-                    "data": {"para_id": p["para_id"], "title": p["title"], "text": p["text"]},
-                    "data_format": "json",
+                    "items": [{
+                        "data_key": p["para_id"],
+                        "data": {"para_id": p["para_id"], "title": p["title"], "text": p["text"]},
+                        "data_format": "json",
+                    } for p in paragraphs[i:i + batch_size]],
                 })
+                if r.is_error:  # tool errors come back as results, not exceptions
+                    raise RuntimeError(f"contex_publish_batch failed: {self._text(r)}")
         asyncio.run(self._run(_pub))
 
     def query(self, question: str, top_k: int, threshold: float) -> list[tuple[str, float]]:
