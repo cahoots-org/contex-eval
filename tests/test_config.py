@@ -7,4 +7,4 @@ def test_core_constants_present():
     assert config.DEFAULT_THRESHOLD == 0.5
     assert config.AGENT_BASE_URL.endswith("/v1")
     assert config.CONTEX_MCP_URL.endswith("/mcp")
-    assert config.EMBED_MODEL == "all-MiniLM-L6-v2"
+    assert config.EMBED_MODEL == "thenlper/gte-base"

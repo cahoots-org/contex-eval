@@ -12,7 +12,7 @@ class ContexClient:
 
     async def _run(self, fn):
         # mcp==2.0.0: streamable_http_client yields a 2-tuple (read, write).
-        # CONTEX_MCP_URL must be the real transport endpoint /mcp/mcp.
+        # CONTEX_MCP_URL is /mcp (Contex v0.2.x fixed the old /mcp/mcp double-mount).
         async with streamable_http_client(self.url) as (read, write):
             async with ClientSession(read, write) as s:
                 await s.initialize()
