@@ -75,7 +75,7 @@ def main(project, k=10):
     bm = recall(lambda v, l: l)
     print(f"bm25 only (ParadeDB)   recall@{k}={sum(bm)/len(bm):.3f}")
     by_pool = {}
-    for p in [10, 20, 30, 50, 100]:
+    for p in sorted({k, 10, 20, 30, 50, 100}):
         by_pool[p] = recall(lambda v, l, p=p: rrf([v[:p], l[:p]]))
         print(f"RRF depth {p:3d}          recall@{k}={sum(by_pool[p])/len(by_pool[p]):.3f}")
     drop = recall(lambda v, l: [x for x in rrf([v, l]) if x in set(v)])
