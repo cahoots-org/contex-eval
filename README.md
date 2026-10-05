@@ -19,6 +19,8 @@ same corpus at the same retrieval budget `k`:
 | **Contex v1** (`d25b593`, stock: gte-base, hybrid) | SciFact recall@10 | 0.825 | 0.890 | **−0.066 [−0.102, −0.029]** |
 | Contex v1, `CANDIDATE_POOL_FACTOR=1` | SciFact recall@10 | 0.882 | 0.890 | ≈ tie |
 | **Contex v1 + #241 fix** (`dd23889`) | SciFact recall@10 | 0.885 | 0.890 | −0.005 [−0.032, +0.022] (tie) |
+| **Contex v1 + #241 fix** (`dd23889`) | HotpotQA recall@5 | 0.843 | 0.857 | −0.013 [−0.040, +0.013] (tie) |
+| **Contex v1 + #241 fix** (`dd23889`) | HotpotQA answer-F1 (agent) | 0.583 | 0.571 | +0.011 [−0.042, +0.063] (tie) |
 
 1. With Contex's shipped embedder (`all-MiniLM-L6-v2`), the hybrid beats dense significantly on both
    benchmarks. The gain comes from the 8–15% of queries where the hybrid wins. Most queries come back identical.
@@ -31,12 +33,14 @@ same corpus at the same retrieval budget `k`:
    *before* RRF. Fusing two 100-deep lists hands the weaker BM25 ranker more of the top 10. Fusing at
    depth `top_k` recovers +0.058, confirmed both live and with `scripts/fusion_replay.py`. Reported as
    [#240](https://github.com/cahoots-org/contex/issues/240) and fixed in #241. Fixed Contex ties dense
-   (0.885 vs 0.890).
+   (0.885 vs 0.890). On HotpotQA it ties dense on recall and on answer EM/F1, and beats BM25 by
+   +0.12 on recall and +0.13 on answer-F1. Fusion depth makes no difference there.
 5. Before v1, hybrid search ignored `threshold` and returned RRF scores. v1 reports cosine similarity
    and applies the threshold on the hybrid path.
 
 Full write-ups, newest first:
 
+- [`2026-10-04-contex-v1-hotpotqa.md`](docs/results/2026-10-04-contex-v1-hotpotqa.md): fixed Contex v1 on HotpotQA, retrieval and agent EM/F1
 - [`2026-10-04-contex-v1-scifact.md`](docs/results/2026-10-04-contex-v1-scifact.md): Contex v1 regression, its cause (RRF over-fetch), and the re-eval after the fix
 - [`2026-09-15-contex-gtebase-real.md`](docs/results/2026-09-15-contex-gtebase-real.md): real Contex reconfigured to gte-base
 - [`2026-09-14-embedder-ablation.md`](docs/results/2026-09-14-embedder-ablation.md): does the hybrid win survive a modern embedder? (no)
@@ -44,7 +48,9 @@ Full write-ups, newest first:
 - [`2026-09-12-hotpotqa-validation.md`](docs/results/2026-09-12-hotpotqa-validation.md): HotpotQA with an agent in the loop (EM/F1, cost)
 - [`contex-hybrid-fts-bug.md`](docs/contex-hybrid-fts-bug.md): the upstream `plainto_tsquery` bug report
 
-Open items: HotpotQA on fixed Contex v1.
+Open items: none blocking. The remaining gap between Contex's vector side and plain dense comes from
+the node text format it embeds (`root | para_id: … | title: … | text: …`). That's about 3 points on
+SciFact and 2–3 on HotpotQA.
 
 ## Setup
 
@@ -84,15 +90,12 @@ because single `contex_publish` calls are rate-limited to 60/min.
 
 ### HotpotQA, agent in the loop (`scripts/run.py`)
 
-Start the answer agent first:
+The agent runs in-process with `CONTEXEVAL_AGENT=mlx`. `mlx_lm.server` 0.31.3 hung on this machine;
+without the variable, the harness calls an OpenAI-compatible server at `AGENT_BASE_URL` instead.
 
 ```bash
-mlx_lm.server --model mlx-community/Qwen2.5-7B-Instruct-4bit --port 8080
-```
-
-```bash
-python scripts/run.py 50 pilot     # includes dump-all; its recall must be 1.000
-python scripts/run.py 150 full     # dump-all omitted from the agent loop
+export CONTEXEVAL_AGENT=mlx CONTEXEVAL_DEVICE=mps
+python scripts/run.py 150 pilot    # pilot includes dump-all (skipped as infeasible; its recall must be 1.000)
 python scripts/analyze.py          # paired bootstrap CIs, contex vs each baseline
 ```
 

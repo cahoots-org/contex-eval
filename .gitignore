@@ -4,7 +4,7 @@ __pycache__/
 .venv/
 venv/
 data/cache/
-data/*.jsonl
+data/**/*.jsonl
 data/report.md
 data/pr_curve.png
 /results/
