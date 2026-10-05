@@ -12,6 +12,7 @@ Contex is run in vector-only mode (HYBRID_SEARCH_ENABLED=false), where the cosin
 similarity >= threshold filter is applied.
 """
 import json
+import os
 import sys
 from contexeval import config, prep
 from contexeval.contex_client import ContexClient
@@ -19,7 +20,7 @@ from contexeval.retrievers.contex import ContexRetriever
 from contexeval.retrievers.dumpall import DumpAllRetriever
 from contexeval.retrievers.bm25 import BM25Retriever
 from contexeval.retrievers.dense import DenseRetriever
-from contexeval.agent import AnswerAgent
+from contexeval.agent import AnswerAgent, MlxAgent
 from contexeval.runner import run
 from contexeval.report import aggregate, render_table, pr_curve
 
@@ -65,7 +66,8 @@ def main(n: int, mode: str):
     if mode == "pilot":
         retrievers.append(DumpAllRetriever(corpus))  # full dump-all only when it fits
 
-    agent = AnswerAgent()
+    # CONTEXEVAL_AGENT=mlx runs the model in-process instead of via an mlx_lm.server endpoint.
+    agent = MlxAgent() if os.getenv("CONTEXEVAL_AGENT") == "mlx" else AnswerAgent()
     agent.warmup()
     records = run(questions, retrievers, agent, config.RESULTS_PATH)
 

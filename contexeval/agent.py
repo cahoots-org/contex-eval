@@ -60,3 +60,28 @@ class AnswerAgent:
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
         )
+
+
+class MlxAgent:
+    """Same contract as AnswerAgent, but runs mlx-lm in-process (no HTTP server).
+
+    mlx_lm.server 0.31.x accepted connections but never answered on this machine; the model
+    itself generates fine in-process. Greedy decoding (mlx default) == temperature 0.
+    """
+    def __init__(self):
+        from mlx_lm import load
+        self.model, self.tokenizer = load(AGENT_MODEL)
+
+    def warmup(self):
+        self.answer("", "Hi.")
+
+    def answer(self, context_text: str, question: str) -> AnswerResult:
+        from mlx_lm import generate
+        prompt = self.tokenizer.apply_chat_template(
+            build_prompt(context_text, question), add_generation_prompt=True, tokenize=False)
+        text = generate(self.model, self.tokenizer, prompt=prompt, max_tokens=256)
+        return AnswerResult(
+            text=text.strip(),
+            prompt_tokens=len(self.tokenizer.encode(prompt)),
+            completion_tokens=len(self.tokenizer.encode(text)),
+        )
