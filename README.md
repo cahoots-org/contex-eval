@@ -18,6 +18,7 @@ same corpus at the same retrieval budget `k`:
 | Contex v0.2.5, **gte-base** embedder | SciFact recall@10 | 0.879 | 0.890 | −0.011 [−0.041, +0.018] (tie) |
 | **Contex v1** (`d25b593`, stock: gte-base, hybrid) | SciFact recall@10 | 0.825 | 0.890 | **−0.066 [−0.102, −0.029]** |
 | Contex v1, `CANDIDATE_POOL_FACTOR=1` | SciFact recall@10 | 0.882 | 0.890 | ≈ tie |
+| **Contex v1 + #241 fix** (`dd23889`) | SciFact recall@10 | 0.885 | 0.890 | −0.005 [−0.032, +0.022] (tie) |
 
 1. With Contex's shipped embedder (`all-MiniLM-L6-v2`), the hybrid beats dense significantly on both
    benchmarks. The gain comes from the 8–15% of queries where the hybrid wins. Most queries come back identical.
@@ -28,21 +29,22 @@ same corpus at the same retrieval budget `k`:
    tokens on HotpotQA n=150 and does not fit the 28k budget for any question.
 4. **Contex v1 regressed below dense.** Since #236, each ranker over-fetches `top_k × 10` candidates
    *before* RRF. Fusing two 100-deep lists hands the weaker BM25 ranker more of the top 10. Fusing at
-   depth `top_k` (`CANDIDATE_POOL_FACTOR=1`) recovers +0.058, confirmed both live and with
-   `scripts/fusion_replay.py`.
+   depth `top_k` recovers +0.058, confirmed both live and with `scripts/fusion_replay.py`. Reported as
+   [#240](https://github.com/cahoots-org/contex/issues/240) and fixed in #241. Fixed Contex ties dense
+   (0.885 vs 0.890).
 5. Before v1, hybrid search ignored `threshold` and returned RRF scores. v1 reports cosine similarity
    and applies the threshold on the hybrid path.
 
 Full write-ups, newest first:
 
-- [`2026-10-04-contex-v1-scifact.md`](docs/results/2026-10-04-contex-v1-scifact.md): Contex v1 regression and its cause (RRF over-fetch)
+- [`2026-10-04-contex-v1-scifact.md`](docs/results/2026-10-04-contex-v1-scifact.md): Contex v1 regression, its cause (RRF over-fetch), and the re-eval after the fix
 - [`2026-09-15-contex-gtebase-real.md`](docs/results/2026-09-15-contex-gtebase-real.md): real Contex reconfigured to gte-base
 - [`2026-09-14-embedder-ablation.md`](docs/results/2026-09-14-embedder-ablation.md): does the hybrid win survive a modern embedder? (no)
 - [`2026-09-12-scifact-keyword-regime.md`](docs/results/2026-09-12-scifact-keyword-regime.md): SciFact across Contex versions (broken FTS → OR fix → ParadeDB)
 - [`2026-09-12-hotpotqa-validation.md`](docs/results/2026-09-12-hotpotqa-validation.md): HotpotQA with an agent in the loop (EM/F1, cost)
 - [`contex-hybrid-fts-bug.md`](docs/contex-hybrid-fts-bug.md): the upstream `plainto_tsquery` bug report
 
-Open items: HotpotQA on Contex v1, and a fix for the #236 fusion depth in Contex itself.
+Open items: HotpotQA on fixed Contex v1.
 
 ## Setup
 
@@ -52,7 +54,7 @@ pip install mlx-lm        # only for the HotpotQA answer agent
 ```
 
 Contex runs from a local checkout at `./contex/` (gitignored, cloned from upstream, currently at
-`d25b593`). The eval stack is its own compose project on `:8011`, so it can run next to other local
+`dd23889`). The eval stack is its own compose project on `:8011`, so it can run next to other local
 Contex instances:
 
 ```bash

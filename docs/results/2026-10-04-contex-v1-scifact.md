@@ -1,5 +1,10 @@
 # Contex v1 on SciFact: hybrid regressed below dense; cause is the RRF over-fetch (#236)
 
+> **UPDATE (2026-10-04, later the same day): fixed upstream.** [#240](https://github.com/cahoots-org/contex/issues/240)
+> was fixed in [#241](https://github.com/cahoots-org/contex/pull/241) (`dd23889`). Fixed Contex scores **0.885 vs
+> dense 0.890, a tie** (−0.005, CI [−0.032, +0.022]). See "Re-eval after the fix" at the end. The body
+> below is kept as the regression record.
+
 **Date:** 2026-10-04
 **Contex:** upstream `d25b593` (v1.0.1+, 179 commits past the v0.2.5 runs). Stock config: gte-base
 via ONNX, hybrid on, `RRF_K=60`.
@@ -102,4 +107,49 @@ the app on `:8011` with 8 CPUs; see README.
 ```
 CONTEX_MCP_URL=http://127.0.0.1:8011/mcp python scripts/run_beir.py 10 scifact-v1   # ~1 h incl. publish
 python scripts/fusion_replay.py scifact-v1 10                                        # fusion diagnosis
+```
+
+## Re-eval after the fix (Contex `dd23889`, #241)
+
+#241 fuses each ranker's top `top_k` into the head and appends the over-fetched remainder as a tail
+for per-document collapsing. It also sets `hnsw.ef_search` to at least the request size and turns on
+`hnsw.iterative_scan` per query. The same merge brought #238, which prefixes each node's embedding
+text with its document title. Because that changes embeddings, the corpus was re-published to a
+fresh project, `scifact-v1fix`. The database-wide `ef_search` overrides used during diagnosis were
+reset first, so this tests the shipped code.
+
+**Live, SciFact recall@10 (n=300):**
+
+| method | recall@10 | context tokens |
+|---|---|---|
+| dense (gte-base) | 0.890 | 3,263 |
+| **contex (fixed)** | **0.885** | 3,471 |
+| bm25 | 0.776 | 3,525 |
+
+- contex − dense = **−0.005, [−0.032, +0.022]**, a tie (W/T/L 8/280/12)
+- contex − bm25 = +0.109, [+0.074, +0.146], excludes 0
+
+**Attribution:**
+
+| change | effect | evidence |
+|---|---|---|
+| fusion depth fix (#241) | +0.057 | old (pre-#238) embeddings queried with the fixed code: 0.825 → **0.882**, same as the replay and `CANDIDATE_POOL_FACTOR=1` |
+| title prefix (#238) | ≈ +0.003 (noise) | vector-only 0.860 → 0.863; fused 0.882 → 0.885 |
+
+`fusion_replay.py scifact-v1fix 10` gives 0.885 at depth 10, matching live exactly. The second
+project in the DB (`scifact-v1`) did not degrade results, which is consistent with the HNSW
+post-filter fix.
+
+**Where this leaves Contex on SciFact:** the hybrid is back to tying a strong dense retriever and
+clearly beats keyword search. Fusion still adds about +0.022 over Contex's own vector-only ranking
+(CI includes 0). The remaining gap to plain dense comes from the node text format (vector-only 0.863
+vs plain dense 0.890), not from fusion.
+
+**Observed during the run (not investigated):** queries slowed sharply while a publish was running.
+300 queries that take about 3 minutes on an idle stack took about 40 minutes alongside an ingest.
+Ingest embedding may be blocking request handling.
+
+```
+CONTEX_MCP_URL=http://127.0.0.1:8011/mcp python scripts/run_beir.py 10 scifact-v1fix
+python scripts/fusion_replay.py scifact-v1fix 10
 ```
