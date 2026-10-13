@@ -11,10 +11,10 @@ SYSTEM = (
 )
 
 
-def build_prompt(context_text: str, question: str) -> list[dict]:
+def build_prompt(context_text: str, question: str, system: str = SYSTEM) -> list[dict]:
     """Build a chat-format prompt with context and question."""
     return [
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": system},
         {
             "role": "user",
             "content": f"Context:\n{context_text}\n\nQuestion: {question}\nAnswer:",
@@ -46,9 +46,9 @@ class AnswerAgent:
         except Exception:
             pass  # Server may not be up; warmup is optional
 
-    def answer(self, context_text: str, question: str) -> AnswerResult:
+    def answer(self, context_text: str, question: str, system: str = SYSTEM) -> AnswerResult:
         """Get an answer from the agent given context and question."""
-        prompt = build_prompt(context_text, question)
+        prompt = build_prompt(context_text, question, system)
         response = self.client.chat.completions.create(
             model=self.model,
             messages=prompt,
@@ -75,10 +75,10 @@ class MlxAgent:
     def warmup(self):
         self.answer("", "Hi.")
 
-    def answer(self, context_text: str, question: str) -> AnswerResult:
+    def answer(self, context_text: str, question: str, system: str = SYSTEM) -> AnswerResult:
         from mlx_lm import generate
         prompt = self.tokenizer.apply_chat_template(
-            build_prompt(context_text, question), add_generation_prompt=True, tokenize=False)
+            build_prompt(context_text, question, system), add_generation_prompt=True, tokenize=False)
         text = generate(self.model, self.tokenizer, prompt=prompt, max_tokens=256)
         return AnswerResult(
             text=text.strip(),
