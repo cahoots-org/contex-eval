@@ -148,3 +148,10 @@ def test_sweep_must_be_well_inside_a_day_slot():
     check_sweep(sweep_s=60, sec_per_day=600)
     with pytest.raises(ValueError, match="RECONCILE_SWEEP_SECONDS"):
         check_sweep(sweep_s=150, sec_per_day=600)
+
+def test_parse_cputime_handles_ps_formats():
+    from contexeval.replay import parse_cputime
+    assert parse_cputime("0:12.50") == 12.5
+    assert parse_cputime("12:03.00") == 723.0
+    assert parse_cputime("1:02:03.00") == 3723.0
+    assert parse_cputime("2-01:00:00") == 2 * 86400 + 3600

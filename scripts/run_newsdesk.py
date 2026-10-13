@@ -19,7 +19,7 @@ from pathlib import Path
 
 from contexeval.config import CONTEX_MCP_URL
 from contexeval.contex_client import ContexSession
-from contexeval.replay import Clock, check_sweep, run_contex
+from contexeval.replay import Clock, check_sweep, parse_cputime, run_contex
 
 DATA = Path("data/wcep")
 CONTAINERS = ["contexeval-contex-1", "contexeval-postgres-1"]
@@ -30,16 +30,35 @@ def load(name):
     return [json.loads(l) for l in open(DATA / name)]
 
 
-def cpu_seconds() -> dict[str, float]:
+NATIVE_ENV = Path("scripts/contex-native.env")
+
+
+def native_env() -> dict[str, str]:
+    return dict(l.split("=", 1) for l in NATIVE_ENV.read_text().split("\n") if l and not l.startswith("#"))
+
+
+def native_pid() -> str:
+    """PID of the native Contex listening on the eval port (scripts/contex_native.sh)."""
+    port = native_env()["CONTEX_PORT"]
+    return subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+                          capture_output=True, text=True, check=True).stdout.split()[0]
+
+
+def cpu_seconds(native: bool) -> dict[str, float]:
     out = {}
-    for c in CONTAINERS:
+    if native:  # host process CPU; MPS GPU time is not included
+        t = subprocess.run(["ps", "-o", "time=", "-p", native_pid()], capture_output=True, text=True, check=True)
+        out["contex-native"] = parse_cputime(t.stdout)
+    for c in CONTAINERS[1:] if native else CONTAINERS:
         stat = subprocess.run(["docker", "exec", c, "cat", "/sys/fs/cgroup/cpu.stat"],
                               capture_output=True, text=True, check=True).stdout
         out[c] = int(next(l.split()[1] for l in stat.splitlines() if l.startswith("usage_usec"))) / 1e6
     return out
 
 
-def sweep_seconds() -> float:
+def sweep_seconds(native: bool) -> float:
+    if native:
+        return float(native_env().get("RECONCILE_SWEEP_SECONDS", 300))
     v = subprocess.run(["docker", "exec", CONTAINERS[0], "printenv", "RECONCILE_SWEEP_SECONDS"],
                        capture_output=True, text=True).stdout.strip()
     return float(v or 300)  # Contex's default when unset
@@ -82,6 +101,8 @@ def main():
     p.add_argument("--stories", type=int, default=1000)
     p.add_argument("--sec-per-day", type=float, default=60.0)
     p.add_argument("--run", required=True)
+    p.add_argument("--native", action="store_true",
+                   help="Contex runs natively via scripts/contex_native.sh (GPU embedding), not in Docker")
     p.add_argument("--no-lag", action="store_true",
                    help="skip lag polling (use for cost runs: polling adds server load)")
     args = p.parse_args()
@@ -104,12 +125,12 @@ def main():
         for row in local_deliveries(by_day, days, stories, k=K, w=W):
             sink.delivery(row)
     else:
-        sweep = sweep_seconds()
+        sweep = sweep_seconds(args.native)
         check_sweep(sweep, args.sec_per_day)
         meta["reconcile_sweep_seconds"] = sweep
         gold_ids = {(g["story"], g["day"]): set(g["articles"]) for g in gold}
         project = f"newsdesk-{args.run}-{uuid.uuid4().hex[:6]}"
-        cpu0, t_start = cpu_seconds(), time.time()
+        cpu0, t_start = cpu_seconds(args.native), time.time()
         clock = Clock(t0=time.time() + 5, d0=replay_days[0], sec_per_day=args.sec_per_day)
 
         async def go():
@@ -117,9 +138,9 @@ def main():
                 await run_contex(s, args.mode, clock, replay_days, by_day, stories, gold_ids, K, W, Sink(out),
                                  watch_lag=not args.no_lag, score_days=set(days))
         asyncio.run(go())
-        cpu1 = cpu_seconds()
+        cpu1 = cpu_seconds(args.native)
         meta |= {"project": project, "wall_s": time.time() - t_start,
-                 "server_cpu_s": {c: cpu1[c] - cpu0[c] for c in CONTAINERS}}
+                 "server_cpu_s": {c: cpu1[c] - cpu0[c] for c in cpu1}}
     (out / "meta.json").write_text(json.dumps(meta, indent=2))
     print(json.dumps(meta, indent=2))
 

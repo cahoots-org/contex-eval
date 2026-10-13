@@ -50,6 +50,15 @@ def check_sweep(sweep_s: float, sec_per_day: float) -> None:
                          "lower it in contex/docker-compose.override.yml")
 
 
+def parse_cputime(s: str) -> float:
+    """`ps -o time=` value ([dd-][hh:]mm:ss.ss) -> seconds."""
+    days, _, rest = s.strip().rpartition("-")
+    secs = 0.0
+    for part in rest.split(":"):
+        secs = secs * 60 + float(part)
+    return secs + int(days or 0) * 86400
+
+
 async def sleep_until(t: float) -> float:
     delay = t - time.time()
     if delay > 0:
