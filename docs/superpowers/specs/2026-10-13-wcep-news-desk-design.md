@@ -124,12 +124,14 @@ at full scale. They reuse `contexeval/retrievers`.
    - The sample is seeded and the same for every method.
 3. **Cost:**
    - Agent side: searches issued and context tokens read per agent turn.
-   - Server side: the number of subscriptions re-matched per publish batch, from Contex's
-     Prometheus metrics or its logs.
+   - Server side: CPU seconds of the Contex and Postgres containers (cgroup `cpu.stat`) per run.
+     Contex's Prometheus metrics cover HTTP only. `contex-sub` and `contex-query` ingest the same
+     articles, so the gap between their CPU totals is the cost of subscriptions against per-day
+     queries.
    - Wall time for both sides.
 4. **Freshness under load:**
    - Lag: wall time from publishing a gold article to its first appearance in a subscription,
-     measured through the MCP push notification with polling as a fallback.
+     measured by polling the subscriptions that have gold in that day's batch every 0.25 s.
    - Publish latency, measured end to end, including the wait for subscriptions to update.
    - Both are swept over the number of subscriptions (50, 200, 414) and the ingest rate (×1, ×4,
      ×16 articles per wall second) on one fixed replay slice.
@@ -165,7 +167,5 @@ New code only. It reuses `contex_client`, `agent`, `retrievers`, `scoring`, `tok
 
 - **Ingest throughput** of the current upstream Contex on 1,000-character articles, natively on
   arm64. This decides S and whether T2 fits.
-- **Server-side cost.** Whether Contex's metrics expose re-matched subscriptions per reconcile. If
-  they don't, count from logs, or file an upstream issue.
 - **Fallback window.** If W = 3 days misses most follow-ups at T0, try W = 1, which is a "today
   only" briefing.
