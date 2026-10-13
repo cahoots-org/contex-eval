@@ -280,8 +280,8 @@ Expected: 4 passed
 - [ ] **Step 6: Run prep on the real data and sanity-check the counts**
 
 Run: `python -m contexeval.prep_wcep data/wcep/raw data/wcep`
-Expected: about 649k articles (fewer after dedup), **414 stories**, and several thousand gold pairs.
-If the story count isn't 414, stop and investigate, because the spec's numbers came from the same
+Expected: about 649k articles (fewer after dedup), **412 stories**, and several thousand gold pairs.
+If the story count isn't 412, stop and investigate, because the spec's numbers came from the same
 counting rule.
 
 - [ ] **Step 7: Commit**
@@ -1385,7 +1385,7 @@ queries on the same engine, with identical ingest.
 - [ ] **Step 3: Load sweep (7 days of the T1 slice)**
 
 ```bash
-for n in 50 200 414; do for s in $S $((S/4)) $((S/16)); do
+for n in 50 200 412; do for s in $S $((S/4)) $((S/16)); do
   python scripts/run_newsdesk.py --mode sub --start $START --days 7 --stories $n --sec-per-day $s --run sweep-n$n-s$s
 done; done
 python scripts/analyze_newsdesk.py results/newsdesk/sweep-*

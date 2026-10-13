@@ -46,7 +46,7 @@ as one Google Drive folder with `train/val/test.jsonl.gz` (490 MB), and needs no
 | Events | 10,200, 2016-08-25 to 2019-08-28 |
 | Per event | date, category, a 30–40 word summary written by a WCEP editor, `wiki_links` (linked entities) |
 | Articles | 649,575 in total: 12,204 cited by the editor (`origin: WCEP`) and 637,371 added automatically from Common Crawl (`origin: CommonCrawl`) |
-| Entities | 15,452 distinct; 414 appear in 10 or more events |
+| Entities | 15,452 distinct; 412 are linked by 10 or more events |
 
 All three splits are pooled. Splits don't matter here because nothing is trained.
 
@@ -57,7 +57,7 @@ distractors. A secondary metric counts them, and the report labels it as machine
 
 ## 4. Stories, needs, and gold
 
-- **Stories.** Each entity linked by at least 10 events is one story: 414 subscriptions, under
+- **Stories.** Each entity linked by at least 10 events is one story: 412 subscriptions, under
   Contex's cap of 1000 per project. The very generic entities (`United_States`,
   `President_of_the_United_States`) stay in and are reported separately, because hard needs are part
   of the test.
@@ -133,7 +133,7 @@ at full scale. They reuse `contexeval/retrievers`.
    - Lag: wall time from publishing a gold article to its first appearance in a subscription,
      measured by polling the subscriptions that have gold in that day's batch every 0.25 s.
    - Publish latency, measured end to end, including the wait for subscriptions to update.
-   - Both are swept over the number of subscriptions (50, 200, 414) and the ingest rate (×1, ×4,
+   - Both are swept over the number of subscriptions (50, 200, 412) and the ingest rate (×1, ×4,
      ×16 articles per wall second) on one fixed replay slice.
 
 Every comparison between methods gets a paired bootstrap 95% CI over (story, day) pairs, reusing
@@ -145,7 +145,7 @@ Every comparison between methods gets a paired bootstrap 95% CI over (story, day
 |---|---|---|---|---|
 | T0 | 1 week | 20 | ~4k | Smoke test; measures ingest throughput, which sets S |
 | T1 | 3 months | stories with gold in the slice | ~50k | First full result |
-| T2 | all 3 years | 414 | 650k | Headline, if T1 throughput puts it within a day of wall time |
+| T2 | all 3 years | 412 | 650k | Headline, if T1 throughput puts it within a day of wall time |
 
 The load sweep in metric 4 runs on the T1 slice.
 
