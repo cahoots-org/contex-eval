@@ -30,9 +30,15 @@ def main(run_dirs):
 
     scores = defaultdict(dict)   # method -> (story, day) -> score dict
     for d in map(Path, run_dirs):
+        meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
+        # A read more than one day slot late has lost the window's oldest day: not comparable.
+        late = {r["day"] for r in rows(d / "days.jsonl")
+                if r.get("read_offset_s", 0) > meta.get("sec_per_day", float("inf"))}
+        if late:
+            print(f"{d.name}: excluding {len(late)} late-read days {sorted(late)}")
         for r in rows(d / "deliveries.jsonl"):
             g = gold.get((r["story"], r["day"]))
-            if g is None:
+            if g is None or r["day"] in late:
                 continue
             window = set().union(*(by_day[x] for x in window_days(r["day"], W)))
             scores[r["method"]][(r["story"], r["day"])] = score_delivery(

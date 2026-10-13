@@ -19,7 +19,7 @@ from pathlib import Path
 
 from contexeval.config import CONTEX_MCP_URL
 from contexeval.contex_client import ContexSession
-from contexeval.replay import Clock, run_contex
+from contexeval.replay import Clock, check_sweep, run_contex
 
 DATA = Path("data/wcep")
 CONTAINERS = ["contexeval-contex-1", "contexeval-postgres-1"]
@@ -37,6 +37,12 @@ def cpu_seconds() -> dict[str, float]:
                               capture_output=True, text=True, check=True).stdout
         out[c] = int(next(l.split()[1] for l in stat.splitlines() if l.startswith("usage_usec"))) / 1e6
     return out
+
+
+def sweep_seconds() -> float:
+    v = subprocess.run(["docker", "exec", CONTAINERS[0], "printenv", "RECONCILE_SWEEP_SECONDS"],
+                       capture_output=True, text=True).stdout.strip()
+    return float(v or 300)  # Contex's default when unset
 
 
 def select(args):
@@ -76,6 +82,8 @@ def main():
     p.add_argument("--stories", type=int, default=1000)
     p.add_argument("--sec-per-day", type=float, default=60.0)
     p.add_argument("--run", required=True)
+    p.add_argument("--no-lag", action="store_true",
+                   help="skip lag polling (use for cost runs: polling adds server load)")
     args = p.parse_args()
     if not (args.local or args.mode):
         sys.exit("pass --mode or --local")
@@ -96,6 +104,9 @@ def main():
         for row in local_deliveries(by_day, days, stories, k=K, w=W):
             sink.delivery(row)
     else:
+        sweep = sweep_seconds()
+        check_sweep(sweep, args.sec_per_day)
+        meta["reconcile_sweep_seconds"] = sweep
         gold_ids = {(g["story"], g["day"]): set(g["articles"]) for g in gold}
         project = f"newsdesk-{args.run}-{uuid.uuid4().hex[:6]}"
         cpu0, t_start = cpu_seconds(), time.time()
@@ -103,7 +114,8 @@ def main():
 
         async def go():
             async with ContexSession(url=CONTEX_MCP_URL, project_id=project) as s:
-                await run_contex(s, args.mode, clock, replay_days, by_day, stories, gold_ids, K, W, Sink(out))
+                await run_contex(s, args.mode, clock, replay_days, by_day, stories, gold_ids, K, W, Sink(out),
+                                 watch_lag=not args.no_lag, score_days=set(days))
         asyncio.run(go())
         cpu1 = cpu_seconds()
         meta |= {"project": project, "wall_s": time.time() - t_start,

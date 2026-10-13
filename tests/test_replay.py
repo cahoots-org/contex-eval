@@ -58,11 +58,11 @@ class Sink:
 STORIES = [{"story": "/wiki/A", "need": "news about A"}, {"story": "/wiki/B", "need": "news about B"}]
 BY_DAY = {"2017-01-01": [{"id": "a1", "text": "x"}], "2017-01-02": [{"id": f"b{i}", "text": "y"} for i in range(1203)]}
 
-def _run(session, mode, gold=None):
-    clock = Clock(t0=time.time(), d0="2017-01-01", sec_per_day=0.2)
+def _run(session, mode, gold=None, by_day=BY_DAY, sec_per_day=0.2, watch_lag=True):
+    clock = Clock(t0=time.time(), d0=min(by_day), sec_per_day=sec_per_day)
     sink = Sink()
-    asyncio.run(run_contex(session, mode, clock, sorted(BY_DAY), BY_DAY, STORIES,
-                           gold or {}, k=10, w=3, out=sink))
+    asyncio.run(run_contex(session, mode, clock, sorted(by_day), by_day, STORIES,
+                           gold or {}, k=10, w=3, out=sink, watch_lag=watch_lag))
     return sink
 
 def test_sub_mode_publishes_in_chunks_and_records_every_story_day():
@@ -93,5 +93,58 @@ def test_lag_is_measured_even_when_replay_is_behind_the_clock():
         async def publish_batch(self, items):
             await asyncio.sleep(0.3)  # longer than the 0.2 s day slot
             self.published.append(items)
-    sink = _run(SlowPublish(), "sub", gold={("/wiki/A", "2017-01-01"): {"a1"}})
+    sink = _run(SlowPublish(), "sub", gold={("/wiki/A", "2017-01-01"): {"a1"}},
+                by_day={"2017-01-01": BY_DAY["2017-01-01"]})
     assert sink.l[0]["lag_s"] is not None
+
+
+class NeverDelivers(FakeSession):
+    async def read_bundle(self, uri):
+        return []
+
+def test_delivery_read_is_on_schedule_even_while_lag_watchers_wait():
+    gold = {("/wiki/A", d): {a["id"] for a in BY_DAY[d][:1]} for d in BY_DAY}
+    sink = _run(NeverDelivers(), "sub", gold=gold, sec_per_day=0.5)
+    assert all(r["read_offset_s"] < 0.5 for r in sink.days)   # read at ~0.9·S, not after watchers
+    assert sink.l and all(r["lag_s"] is None for r in sink.l)    # watchers still finished, after the run
+
+def test_run_aborts_when_reads_fall_out_of_the_window():
+    class VerySlow(FakeSession):
+        async def publish_batch(self, items):
+            await asyncio.sleep(0.4)
+            self.published.append(items)
+    with pytest.raises(RuntimeError, match="behind"):
+        _run(VerySlow(), "query")   # day 2: 3 batches x 0.4 s > window (ceil(3 x 0.2) = 1 s)
+
+def test_watch_lag_off_records_no_lag_and_no_extra_reads():
+    class Counting(FakeSession):
+        reads = 0
+        async def read_bundle(self, uri):
+            Counting.reads += 1
+            return []
+    sink = _run(Counting(), "sub", gold={("/wiki/A", "2017-01-01"): {"a1"}}, watch_lag=False)
+    assert sink.l == [] and Counting.reads == len(STORIES) * len(BY_DAY)
+
+def test_lag_is_measured_from_the_articles_own_batch():
+    class Batched(FakeSession):
+        async def publish_batch(self, items):
+            await asyncio.sleep(0.1)
+            self.published.append(items)
+        async def read_bundle(self, uri):
+            return ["b0"]
+    day = {"2017-01-02": BY_DAY["2017-01-02"]}          # 3 batches; b0 is in the first
+    sink = _run(Batched(), "sub", gold={("/wiki/A", "2017-01-02"): {"b0"}}, by_day=day, sec_per_day=1.0)
+    assert sink.l[0]["lag_s"] >= 0.2                     # includes batches 2 and 3
+
+def test_preroll_days_are_published_but_not_recorded_as_deliveries():
+    s, sink = FakeSession(), Sink()
+    clock = Clock(t0=time.time(), d0="2017-01-01", sec_per_day=0.2)
+    asyncio.run(run_contex(s, "query", clock, sorted(BY_DAY), BY_DAY, STORIES, {}, k=10, w=3,
+                           out=sink, score_days={"2017-01-02"}))
+    assert len(s.published) == 4 and {r["day"] for r in sink.d} == {"2017-01-02"}
+
+def test_sweep_must_be_well_inside_a_day_slot():
+    from contexeval.replay import check_sweep
+    check_sweep(sweep_s=60, sec_per_day=600)
+    with pytest.raises(ValueError, match="RECONCILE_SWEEP_SECONDS"):
+        check_sweep(sweep_s=150, sec_per_day=600)

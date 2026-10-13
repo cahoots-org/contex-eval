@@ -41,6 +41,15 @@ def chunks(xs: list, n: int = 500) -> list[list]:
     return [xs[i:i + n] for i in range(0, len(xs), n)]
 
 
+def check_sweep(sweep_s: float, sec_per_day: float) -> None:
+    """Contex drops out-of-window items from a bundle only on a re-match: a publish that affects it,
+    or the periodic sweep. A sweep slower than a tenth of a day lets stale items linger and widens
+    contex-sub's effective window."""
+    if sweep_s > sec_per_day / 10:
+        raise ValueError(f"RECONCILE_SWEEP_SECONDS={sweep_s:g} > sec_per_day/10 ({sec_per_day / 10:g}); "
+                         "lower it in contex/docker-compose.override.yml")
+
+
 async def sleep_until(t: float) -> float:
     delay = t - time.time()
     if delay > 0:
@@ -50,6 +59,7 @@ async def sleep_until(t: float) -> float:
 
 
 READ_CONCURRENCY = 16
+LAG_CONCURRENCY = 4  # lag polling is extra server load; keep it small
 LAG_POLL_S = 0.25
 
 
@@ -61,21 +71,25 @@ async def _gather_limited(coros, n=READ_CONCURRENCY):
     return await asyncio.gather(*(one(c) for c in coros))
 
 
-async def _watch_lag(session, uri, story, day, articles, published_t, deadline, out):
-    """Poll one subscription until each gold article in today's batch shows up, or read time."""
-    pending = set(articles)
+async def _watch_lag(session, sem, uri, story, day, published, deadline, out):
+    """Poll one subscription until each gold article shows up, or deadline.
+
+    ``published`` maps article id -> wall time its publish batch returned."""
+    pending = set(published)
     while pending and time.time() < deadline:
-        seen = set(await session.read_bundle(uri)) & pending
+        async with sem:
+            seen = set(await session.read_bundle(uri)) & pending
         for a in sorted(seen):
-            out.lag({"story": story, "day": day, "article": a, "lag_s": time.time() - published_t})
+            out.lag({"story": story, "day": day, "article": a, "lag_s": time.time() - published[a]})
         pending -= seen
         await asyncio.sleep(LAG_POLL_S)
     for a in sorted(pending):
         out.lag({"story": story, "day": day, "article": a, "lag_s": None})
 
 
-async def run_contex(session, mode, clock, days, by_day, stories, gold_ids, k, w, out):
+async def run_contex(session, mode, clock, days, by_day, stories, gold_ids, k, w, out, watch_lag=True, score_days=None):
     max_age = clock.max_age_seconds(w)
+    lag_sem = asyncio.Semaphore(LAG_CONCURRENCY)
     uris = {}
     if mode == "sub":
         for st in stories:
@@ -89,30 +103,36 @@ async def run_contex(session, mode, clock, days, by_day, stories, gold_ids, k, w
         except Exception as e:
             raise RuntimeError(f"{mode} read failed for story {st['story']}: {e}") from e
 
+    watchers = []
     for day in days:
         behind = await sleep_until(clock.slot_start(day))
         arts = by_day.get(day, [])
         t = time.time()
+        published = {}  # article id -> when its batch returned
         for batch in chunks(arts):
             await session.publish_batch([{"data_key": a["id"], "data": a["text"], "data_format": "text",
                                           "published_at": clock.published_at(day)} for a in batch])
-        published_t = time.time()
-        watchers = []
-        if mode == "sub":
-            today = {a["id"] for a in arts}
+            published |= dict.fromkeys((a["id"] for a in batch), time.time())
+        publish_s = time.time() - t
+        if mode == "sub" and watch_lag:
             for st in stories:
-                g = gold_ids.get((st["story"], day), set()) & today
+                g = gold_ids.get((st["story"], day), set()) & published.keys()
                 if g:
+                    # Runs alongside later days; the delivery read below never waits for it.
                     watchers.append(asyncio.create_task(_watch_lag(
-                        session, uris[st["story"]], st["story"], day, g, published_t,
-                        # When ingest runs behind, read time may already be past; still give
-                        # delivery most of a day slot before calling it undelivered.
-                        max(clock.read_time(day), published_t + READ_AT * clock.sec_per_day), out)))
+                        session, lag_sem, uris[st["story"]], st["story"], day,
+                        {a: published[a] for a in g}, time.time() + READ_AT * clock.sec_per_day, out)))
         await sleep_until(clock.read_time(day))
-        await asyncio.gather(*watchers)
+        read_offset = time.time() - clock.slot_start(day)
+        if read_offset > max_age:
+            raise RuntimeError(f"{day}: read {read_offset:.0f}s after slot start, behind past the "
+                               f"{max_age}s window; today's articles are already out of it. Raise --sec-per-day.")
         r0 = time.time()
-        results = await _gather_limited([fetch(st) for st in stories])
+        # Pre-roll days are published to fill the window, not read or scored.
+        scored = score_days is None or day in score_days
+        results = await _gather_limited([fetch(st) for st in stories]) if scored else []
         for st, ids in zip(stories, results):
             out.delivery({"method": f"contex-{mode}", "story": st["story"], "day": day, "ids": ids})
-        out.day({"day": day, "n_articles": len(arts), "behind_s": behind,
-                 "publish_s": published_t - t, "read_s": time.time() - r0})
+        out.day({"day": day, "n_articles": len(arts), "behind_s": behind, "publish_s": publish_s,
+                 "read_offset_s": read_offset, "read_s": time.time() - r0})
+    await asyncio.gather(*watchers)

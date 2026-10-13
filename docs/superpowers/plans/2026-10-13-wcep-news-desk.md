@@ -34,7 +34,7 @@ freshness under load.
 - Seed `13` for every sample.
 - Briefing sample: `300` gold pairs + `100` quiet pairs. Briefings are at most 60 words.
 - Embedder for local dense: `contexeval.config.EMBED_MODEL` (`thenlper/gte-base`, same as Contex).
-- Contex env for replays: `RECONCILE_SWEEP_SECONDS = sec_per_day / 4`, set in the local
+- Contex env for replays: `RECONCILE_SWEEP_SECONDS ≤ sec_per_day / 10 (the CLI refuses otherwise)`, set in the local
   `contex/docker-compose.override.yml`. Disclose it in the results doc.
 - Contex limits to respect: 1000 subscriptions per project, `top_k ≤ 100`, ≤1000 items per publish
   batch, subscription TTL 3600 s (renewed on read).
