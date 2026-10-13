@@ -11,29 +11,41 @@ import gzip
 import json
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
 MIN_EVENTS = 10
+# Article dates further than this from their event are archive/crawl times, not publish dates.
+MAX_SKEW_DAYS = 7
 TEXT_CHARS = 1000
 SPLITS = ("train", "val", "test")
 
 
 def parse_day(s):
-    for fmt in ("%b %d, %Y", "%Y-%m-%d"):
+    """'Aug 23, 2016' (train publish_data) or '2019-01-07 14:55:49+00:00' (time) -> ISO day."""
+    for fmt, n in (("%b %d, %Y", None), ("%Y-%m-%d", 10)):
         try:
-            return datetime.strptime(s, fmt).date().isoformat()
+            return datetime.strptime(s[:n], fmt).date().isoformat()
         except (TypeError, ValueError):
             pass
     return None
+
+
+def article_day(a: dict, event_day: str) -> str:
+    """publish_data, else time, if within MAX_SKEW_DAYS of the event; else the event date."""
+    for field in ("publish_data", "time"):
+        day = parse_day(a.get(field))
+        if day and abs((date.fromisoformat(day) - date.fromisoformat(event_day)).days) <= MAX_SKEW_DAYS:
+            return day
+    return event_day
 
 
 def story_title(link: str) -> str:
     return unquote(link.removeprefix("/wiki/")).replace("_", " ")
 
 
-def prep(clusters, lo="2016-08-25", hi="2019-08-28"):
+def prep(clusters):
     counts = Counter(link for c in clusters for link in set(c["wiki_links"]))
     story_ids = {link for link, n in counts.items() if n >= MIN_EVENTS}
 
@@ -43,9 +55,7 @@ def prep(clusters, lo="2016-08-25", hi="2019-08-28"):
         for a in c["articles"]:
             if a["id"] in articles:  # an article can sit in several clusters; first wins
                 continue
-            day = parse_day(a.get("publish_data"))
-            if day is None or not lo <= day <= hi:
-                day = c["date"]
+            day = article_day(a, c["date"])
             # Body as one paragraph: Contex embeds one node per blank-line paragraph.
             body = " ".join((a.get("text") or "").split())
             text = ((a.get("title") or "") + "\n\n" + body).strip()[:TEXT_CHARS]
@@ -70,7 +80,7 @@ def _read(raw_dir: Path):
             for line in f:
                 c = json.loads(line)
                 # Keep only what prep reads; full article bodies would not fit in memory.
-                c["articles"] = [{k: a.get(k) for k in ("id", "origin", "publish_data", "title")}
+                c["articles"] = [{k: a.get(k) for k in ("id", "origin", "publish_data", "time", "title")}
                                  | {"text": (a.get("text") or "")[:TEXT_CHARS]} for a in c["articles"]]
                 yield c
 

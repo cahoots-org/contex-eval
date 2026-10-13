@@ -58,3 +58,22 @@ def test_text_is_title_plus_one_body_paragraph():
         _art("p", title="Headline", text="First para.\n\nSecond   para.\nThird.")])]
     by = {a["id"]: a for a in prep(clusters)[0]}
     assert by["p"]["text"] == "Headline\n\nFirst para. Second para. Third."
+
+def test_day_from_time_field_within_a_week_of_the_event_else_event_date():
+    # val/test articles and every editor-cited article carry only "time"; far-off times are
+    # archive/crawl times, not publish dates.
+    def t(id, time):
+        return {"id": id, "origin": "WCEP", "time": time, "title": "T", "text": "b"}
+    clusters = _many("/wiki/Brexit", MIN_EVENTS) + [_cluster(700, "2019-01-06", ["/wiki/Brexit"], [
+        t("near", "2019-01-07 14:55:49+00:00"),
+        t("crawl", "2020-10-06 11:40:29.404639+00:00"),
+        t("none", "None"),
+    ])]
+    by = {a["id"]: a for a in prep(clusters)[0]}
+    assert by["near"]["day"] == "2019-01-07"
+    assert by["crawl"]["day"] == "2019-01-06" and by["none"]["day"] == "2019-01-06"
+
+def test_publish_data_far_from_event_falls_back_to_event_date():
+    clusters = _many("/wiki/Brexit", MIN_EVENTS) + [_cluster(701, "2017-02-01", ["/wiki/Brexit"], [
+        _art("far", pub="Mar 20, 2017")])]
+    assert {a["id"]: a for a in prep(clusters)[0]}["far"]["day"] == "2017-02-01"
