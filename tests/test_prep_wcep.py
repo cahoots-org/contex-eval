@@ -50,3 +50,11 @@ def test_article_fields_fallbacks_and_dedup():
     assert by["c"]["day"] == "2017-02-03" and len(by["c"]["text"]) == 1000
     days = [a["day"] for a in prep(clusters)[0]]
     assert days == sorted(days)
+
+def test_text_is_title_plus_one_body_paragraph():
+    # Contex's text parser makes one node per blank-line paragraph; one body paragraph keeps
+    # each article at two nodes (title, body) instead of ~6.
+    clusters = _many("/wiki/Brexit", MIN_EVENTS) + [_cluster(600, "2017-02-01", ["/wiki/Brexit"], [
+        _art("p", title="Headline", text="First para.\n\nSecond   para.\nThird.")])]
+    by = {a["id"]: a for a in prep(clusters)[0]}
+    assert by["p"]["text"] == "Headline\n\nFirst para. Second para. Third."

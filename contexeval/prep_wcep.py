@@ -46,7 +46,9 @@ def prep(clusters, lo="2016-08-25", hi="2019-08-28"):
             day = parse_day(a.get("publish_data"))
             if day is None or not lo <= day <= hi:
                 day = c["date"]
-            text = ((a.get("title") or "") + "\n\n" + (a.get("text") or "")).strip()[:TEXT_CHARS]
+            # Body as one paragraph: Contex embeds one node per blank-line paragraph.
+            body = " ".join((a.get("text") or "").split())
+            text = ((a.get("title") or "") + "\n\n" + body).strip()[:TEXT_CHARS]
             articles[a["id"]] = {"id": a["id"], "day": day, "text": text,
                                  "origin": a["origin"], "event": c["id"]}
         cited = [a["id"] for a in c["articles"] if a["origin"] == "WCEP"]
