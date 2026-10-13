@@ -1,8 +1,8 @@
 diff --git a/src/core/embedder.py b/src/core/embedder.py
-index 7da937c..f50ae00 100644
+index 7da937c..5e1411b 100644
 --- a/src/core/embedder.py
 +++ b/src/core/embedder.py
-@@ -62,3 +62,22 @@ class OnnxEmbedder:
+@@ -62,3 +62,27 @@ class OnnxEmbedder:
          hidden = self.session.run(None, feed)[0]
          pooled = (hidden * mask[..., None]).sum(axis=1) / mask.sum(axis=1, keepdims=True)
          return (pooled / np.linalg.norm(pooled, axis=1, keepdims=True)).astype(np.float32)
@@ -16,6 +16,9 @@ index 7da937c..f50ae00 100644
 +        from sentence_transformers import SentenceTransformer
 +        self.model = SentenceTransformer(model_name, device=device)
 +        self.model.max_seq_length = MAX_SEQ_LENGTH
++        # Contex encodes from worker threads (encode_async); MPS is not thread-safe.
++        import threading
++        self._lock = threading.Lock()
 +
 +    def get_sentence_embedding_dimension(self) -> int:
 +        return self.model.get_sentence_embedding_dimension()
@@ -23,8 +26,10 @@ index 7da937c..f50ae00 100644
 +    def encode(self, texts: Union[str, List[str]], batch_size: int = 32) -> np.ndarray:
 +        if isinstance(texts, str):
 +            return self.encode([texts], batch_size)[0]
-+        return self.model.encode([t[:MAX_EMBED_CHARS] for t in texts], batch_size=batch_size,
-+                                 normalize_embeddings=True, convert_to_numpy=True).astype(np.float32)
++        with self._lock:
++            return self.model.encode([t[:MAX_EMBED_CHARS] for t in texts], batch_size=batch_size,
++                                     normalize_embeddings=True, convert_to_numpy=True,
++                                     show_progress_bar=False).astype(np.float32)
 diff --git a/src/core/semantic_matcher.py b/src/core/semantic_matcher.py
 index 1421e70..62e2d03 100644
 --- a/src/core/semantic_matcher.py
