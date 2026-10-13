@@ -1,5 +1,6 @@
 import asyncio
 import json
+from contextlib import AsyncExitStack
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from .config import CONTEX_MCP_URL, CONTEX_PROJECT_ID
@@ -55,3 +56,58 @@ class ContexClient:
                 seen.add(pid)
                 out.append((pid, float(m["similarity"])))
         return out
+
+
+def doc_ids(matches: list[dict]) -> list[str]:
+    out: list[str] = []
+    for m in matches:
+        d = m.get("document") or m["data_key"]
+        if d not in out:
+            out.append(d)
+    return out
+
+
+class ContexSession:
+    """One MCP session held for a whole replay. ContexClient opens a session per call, which is
+    fine for one-shot evals but too slow for hundreds of reads per simulated day."""
+
+    def __init__(self, url: str = CONTEX_MCP_URL, project_id: str = CONTEX_PROJECT_ID):
+        self.url = url
+        self.project_id = project_id
+
+    async def __aenter__(self):
+        self._stack = AsyncExitStack()
+        read, write = await self._stack.enter_async_context(streamable_http_client(self.url))
+        self.s = await self._stack.enter_async_context(ClientSession(read, write))
+        await self.s.initialize()
+        return self
+
+    async def __aexit__(self, *exc):
+        await self._stack.aclose()
+
+    async def _call(self, tool: str, args: dict) -> str:
+        r = await self.s.call_tool(tool, {"project_id": self.project_id, **args})
+        if r.is_error:
+            raise RuntimeError(f"{tool} failed: {r.content[0].text}")
+        return r.content[0].text
+
+    async def publish_batch(self, items: list[dict]) -> None:
+        await self._call("contex_publish_batch", {"items": items})
+
+    async def subscribe(self, need: str, top_k: int, max_age_seconds: int) -> str:
+        return json.loads(await self._call("contex_create_subscription", {
+            "needs": [need], "top_k": top_k, "threshold": 0.0, "max_age_seconds": max_age_seconds,
+        }))["resource_uri"]
+
+    async def read_bundle(self, uri: str) -> list[str]:
+        try:
+            r = await self.s.read_resource(uri)
+            bundle = json.loads(r.contents[0].text)
+        except Exception as e:
+            raise RuntimeError(f"reading {uri} failed: {e}") from e
+        return doc_ids([m for ms in bundle.values() for m in ms])
+
+    async def query(self, need: str, top_k: int, max_age_seconds: int) -> list[str]:
+        return doc_ids(json.loads(await self._call("contex_query", {
+            "query": need, "top_k": top_k, "threshold": 0.0, "max_age_seconds": max_age_seconds,
+        }))["matches"])
