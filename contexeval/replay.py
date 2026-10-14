@@ -145,3 +145,132 @@ async def run_contex(session, mode, clock, days, by_day, stories, gold_ids, k, w
         out.day({"day": day, "n_articles": len(arts), "behind_s": behind, "publish_s": publish_s,
                  "read_offset_s": read_offset, "read_s": time.time() - r0})
     await asyncio.gather(*watchers)
+
+
+# --- Trickle replay: push vs pull at equal freshness (spec §11) ---------------------------
+
+TRICKLE_SPAN = 0.8  # batches spread over the first 80% of a day slot; reads at READ_AT
+
+
+def split(xs: list, n: int) -> list[list]:
+    """n contiguous, near-equal parts (some empty when len(xs) < n)."""
+    return [xs[i * len(xs) // n:(i + 1) * len(xs) // n] for i in range(n)]
+
+
+def batch_times(clock: Clock, day: str, n: int) -> list[float]:
+    step = TRICKLE_SPAN * clock.sec_per_day / n
+    return [clock.slot_start(day) + i * step for i in range(n)]
+
+
+async def run_trickle(session, mode, clock, days, by_day, stories, gold_ids, k, w, out,
+                      n_batches=6, pull_every=1, score_days=None):
+    """Publish each day in n_batches; agents hold whatever push (mode "push") or a query every
+    pull_every batches (mode "pull") last gave them. Records the held bundle at READ_AT."""
+    max_age = clock.max_age_seconds(w)
+    method = "contex-push" if mode == "push" else f"contex-pull-k{pull_every}"
+    held = {st["story"]: [] for st in stories}
+    pending: dict[str, dict[str, tuple[str, float]]] = {st["story"]: {} for st in stories}
+    counts = {"reads": 0, "queries": 0, "resubscribed": 0}
+    by_uri, handlers = {}, set()
+    read_sem = asyncio.Semaphore(READ_CONCURRENCY)
+
+    def resolve(story, ids, t):
+        for a in [a for a in pending[story] if a in ids]:
+            day, published = pending[story].pop(a)
+            out.lag({"story": story, "day": day, "article": a, "lag_s": t - published})
+
+    async def on_push(uri):
+        st = by_uri[uri]
+        try:
+            try:
+                async with read_sem:
+                    ids = await session.read_bundle(uri)
+            except RuntimeError as e:
+                if "expired" not in str(e).lower():
+                    raise
+                # Listening does not renew the lease; re-creating with the same arguments resumes
+                # the same URI.
+                await session.subscribe(st["need"], top_k=k, max_age_seconds=max_age)
+                counts["resubscribed"] += 1
+                async with read_sem:
+                    ids = await session.read_bundle(uri)
+        except Exception as e:
+            raise RuntimeError(f"push read failed for story {st['story']}: {e}") from e
+        counts["reads"] += 1
+        held[st["story"]] = ids
+        resolve(st["story"], set(ids), time.time())
+
+    async def pull_round():
+        async def one(st):
+            try:
+                return await session.query(st["need"], top_k=k, max_age_seconds=max_age)
+            except Exception as e:
+                raise RuntimeError(f"pull query failed for story {st['story']}: {e}") from e
+        results = await _gather_limited([one(st) for st in stories])
+        t = time.time()
+        counts["queries"] += len(stories)
+        for st, ids in zip(stories, results):
+            held[st["story"]] = ids
+            resolve(st["story"], set(ids), t)
+
+    def check_handlers():
+        for h in [h for h in handlers if h.done()]:
+            handlers.discard(h)
+            h.result()  # re-raises a failed push read
+
+    async def replay():
+        for day in days:
+            gold_today = {}
+            for st in stories:
+                for a in gold_ids.get((st["story"], day), ()):
+                    gold_today.setdefault(a, []).append(st["story"])
+            t_day, behind_max = time.time(), 0.0
+            for i, (t_batch, part) in enumerate(zip(batch_times(clock, day, n_batches),
+                                                    split(by_day.get(day, []), n_batches))):
+                behind = await sleep_until(t_batch)
+                behind_max = max(behind_max, behind)
+                if behind > clock.sec_per_day:
+                    raise RuntimeError(f"{day} batch {i}: {behind:.0f}s behind the clock; raise --sec-per-day")
+                for c in chunks(part):
+                    await session.publish_batch([{"data_key": a["id"], "data": a["text"], "data_format": "text",
+                                                  "published_at": clock.published_at(day)} for a in c])
+                    tp = time.time()
+                    for a in c:
+                        for story in gold_today.get(a["id"], ()):
+                            pending[story][a["id"]] = (day, tp)
+                if mode == "pull" and (i + 1) % pull_every == 0:
+                    await pull_round()
+                check_handlers()
+            await sleep_until(clock.read_time(day))
+            read_offset = time.time() - clock.slot_start(day)
+            if read_offset > max_age:
+                raise RuntimeError(f"{day}: read {read_offset:.0f}s after slot start, behind past the "
+                                   f"{max_age}s window. Raise --sec-per-day.")
+            check_handlers()
+            if score_days is None or day in score_days:
+                for st in stories:
+                    out.delivery({"method": method, "story": st["story"], "day": day, "ids": list(held[st["story"]])})
+            out.day({"day": day, "n_articles": len(by_day.get(day, [])), "behind_s": behind_max,
+                     "read_offset_s": read_offset, **counts})
+            counts.update(reads=0, queries=0, resubscribed=0)
+
+    if mode == "push":
+        for st in stories:
+            uri = await session.subscribe(st["need"], top_k=k, max_age_seconds=max_age)
+            by_uri[uri] = st
+        async with session.listen(list(by_uri)) as events:
+            async def listener():
+                async for ev in events:
+                    if ev.uri in by_uri:
+                        handlers.add(asyncio.create_task(on_push(ev.uri)))
+            listening = asyncio.create_task(listener())
+            try:
+                await replay()
+            finally:
+                listening.cancel()
+                await asyncio.gather(listening, *handlers, return_exceptions=True)
+    else:
+        await replay()
+    for story, left in pending.items():
+        for a, (day, _) in left.items():
+            out.lag({"story": story, "day": day, "article": a, "lag_s": None})

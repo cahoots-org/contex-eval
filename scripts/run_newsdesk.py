@@ -19,7 +19,7 @@ from pathlib import Path
 
 from contexeval.config import CONTEX_MCP_URL
 from contexeval.contex_client import ContexSession
-from contexeval.replay import Clock, check_sweep, parse_cputime, run_contex
+from contexeval.replay import Clock, check_sweep, parse_cputime, run_contex, run_trickle
 
 DATA = Path("data/wcep")
 CONTAINERS = ["contexeval-contex-1", "contexeval-postgres-1"]
@@ -94,7 +94,10 @@ class Sink:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--mode", choices=["sub", "query"])
+    p.add_argument("--mode", choices=["sub", "query", "push", "pull"],
+                   help="sub/query: one read per day (T1). push/pull: trickled batches (spec §11)")
+    p.add_argument("--batches", type=int, default=6, help="push/pull: publish batches per day")
+    p.add_argument("--pull-every", type=int, default=1, help="pull: query after every k-th batch")
     p.add_argument("--local", action="store_true")
     p.add_argument("--start", required=True)
     p.add_argument("--days", type=int, required=True)
@@ -135,8 +138,12 @@ def main():
 
         async def go():
             async with ContexSession(url=CONTEX_MCP_URL, project_id=project) as s:
-                await run_contex(s, args.mode, clock, replay_days, by_day, stories, gold_ids, K, W, Sink(out),
-                                 watch_lag=not args.no_lag, score_days=set(days))
+                if args.mode in ("push", "pull"):
+                    await run_trickle(s, args.mode, clock, replay_days, by_day, stories, gold_ids, K, W, Sink(out),
+                                      n_batches=args.batches, pull_every=args.pull_every, score_days=set(days))
+                else:
+                    await run_contex(s, args.mode, clock, replay_days, by_day, stories, gold_ids, K, W, Sink(out),
+                                     watch_lag=not args.no_lag, score_days=set(days))
         asyncio.run(go())
         cpu1 = cpu_seconds(args.native)
         meta |= {"project": project, "wall_s": time.time() - t_start,

@@ -52,11 +52,12 @@ def main(run_dirs):
         print(f"  {m:13s} recall@10={statistics.mean(rec) if rec else float('nan'):.3f} (n={len(rec)})  "
               f"event_hit={statistics.mean(hit):.3f} (machine-labelled)  undeliverable_gold={und}")
 
-    print("\nPaired 95% CI, contex-sub minus baseline (recall):")
-    for base in [m for m in scores if m != "contex-sub"]:
-        keys = [k for k in scores.get("contex-sub", {}) if k in scores[base]
-                and scores["contex-sub"][k]["recall"] is not None]
-        diffs = [scores["contex-sub"][k]["recall"] - scores[base][k]["recall"] for k in keys]
+    ref = "contex-push" if "contex-push" in scores else "contex-sub"
+    print(f"\nPaired 95% CI, {ref} minus baseline (recall):")
+    for base in [m for m in scores if m != ref]:
+        keys = [k for k in scores.get(ref, {}) if k in scores[base]
+                and scores[ref][k]["recall"] is not None]
+        diffs = [scores[ref][k]["recall"] - scores[base][k]["recall"] for k in keys]
         if diffs:
             lo, hi = boot_ci(diffs)
             print(f"  vs {base:13s} {statistics.mean(diffs):+.3f} [{lo:+.3f}, {hi:+.3f}] n={len(diffs)}")
@@ -72,6 +73,9 @@ def main(run_dirs):
                   f"server_cpu_s={meta.get('server_cpu_s')} wall_s={meta.get('wall_s')}")
             print(f"  lag p50={pct(.5)} p95={pct(.95)} undelivered_by_read={lags.count(None)}/{len(lags)}")
             print(f"  max behind_s={max((r['behind_s'] for r in days), default=None)}")
+            tot = {c: sum(r.get(c, 0) for r in days) for c in ("reads", "queries", "resubscribed")}
+            if any(tot.values()):
+                print(f"  agent-side totals: {tot}")
         for b in rows(d / "briefing_scores.jsonl"):
             print(f"  briefing {b}")
 
