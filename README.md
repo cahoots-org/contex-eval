@@ -1,8 +1,11 @@
 # contexeval — Contex retrieval benchmark harness
 
-Measures whether [Contex](https://github.com/cahoots-org/contex)'s hybrid retrieval (BM25 + dense, RRF
-fusion) beats plain baselines on public benchmarks with independent labels. Methods compared on the
-same corpus at the same retrieval budget `k`:
+Measures [Contex](https://github.com/cahoots-org/contex) against plain baselines on public data with
+independent labels. Two kinds of test:
+- **Live subscriptions:** a replayed news stream (WCEP). Push subscriptions against polling, and
+  against dense and BM25 re-queried over the same window. See `scripts/run_newsdesk.py`.
+- **Static retrieval:** SciFact and HotpotQA. Contex's hybrid retrieval (BM25 + dense, RRF fusion)
+  against baselines on the same corpus at the same retrieval budget `k`:
 
 - `contex`: Contex over MCP, `HYBRID_SEARCH_ENABLED=true`
 - `dense`: sentence-transformers cosine top-k, using the same embedder Contex runs
@@ -10,6 +13,28 @@ same corpus at the same retrieval budget `k`:
 - `dump-all`: the whole pool (HotpotQA only; a recall ceiling and cost reference)
 
 ## Current findings
+
+### Live subscriptions: WCEP news desk
+
+Three months of WCEP news is replayed into Contex while hundreds of agents each follow one story,
+scored against editor labels ([write-up](docs/results/2026-10-14-wcep-news-desk.md)).
+
+| Comparison (Contex `feca2de`, native GPU embedding) | Result |
+|---|---|
+| Push subscriptions vs polling after every batch, 162 agents × 14 days | **45% less server CPU** (7,829 vs 14,333 s); recall@10 0.185 vs 0.179, +0.006 [+0.000, +0.014]; lag p90 106 vs 111 s |
+| Subscription read daily vs dense / BM25 re-queried daily, 338 agents × 90 days | recall@10 0.183 vs 0.179 / 0.175: ties, +0.004 [−0.010, +0.019] / +0.008 [−0.007, +0.024] |
+| Subscription vs snapshot fetched once | +0.182 [+0.166, +0.199] |
+| Subscription read daily vs `contex_query` daily | −0.008 [−0.013, −0.003], +29% server CPU: fixed-schedule reads waste the refresh work |
+
+Used as designed (agents read only when Contex pushes), subscriptions keep agents as fresh as
+polling for about half the server cost. Problems found in Contex:
+- Subscriptions are re-matched one at a time under a per-project lock, so bundles lag the data
+  with hundreds of subscriptions.
+- Ingest halves with 338 subscriptions.
+- The compose Postgres lacks `shm_size`, which breaks concurrent queries.
+- Listening alone doesn't renew a subscription's lease.
+
+### Static retrieval benchmarks
 
 | Setup | Benchmark | contex | dense | contex − dense (95% CI) |
 |---|---|---|---|---|
@@ -40,6 +65,7 @@ same corpus at the same retrieval budget `k`:
 
 Full write-ups, newest first:
 
+- [`2026-10-14-wcep-news-desk.md`](docs/results/2026-10-14-wcep-news-desk.md): live subscriptions on a replayed news stream; push vs polling cost, freshness, and Contex scaling problems
 - [`2026-10-04-contex-v1-hotpotqa.md`](docs/results/2026-10-04-contex-v1-hotpotqa.md): fixed Contex v1 on HotpotQA, retrieval and agent EM/F1
 - [`2026-10-04-contex-v1-scifact.md`](docs/results/2026-10-04-contex-v1-scifact.md): Contex v1 regression, its cause (RRF over-fetch), and the re-eval after the fix
 - [`2026-09-15-contex-gtebase-real.md`](docs/results/2026-09-15-contex-gtebase-real.md): real Contex reconfigured to gte-base
@@ -48,7 +74,8 @@ Full write-ups, newest first:
 - [`2026-09-12-hotpotqa-validation.md`](docs/results/2026-09-12-hotpotqa-validation.md): HotpotQA with an agent in the loop (EM/F1, cost)
 - [`contex-hybrid-fts-bug.md`](docs/contex-hybrid-fts-bug.md): the upstream `plainto_tsquery` bug report
 
-Open items: none blocking. The remaining gap between Contex's vector side and plain dense comes from
+Open items: report the four Contex problems from the news-desk write-up upstream. On the static
+benchmarks, none blocking. The remaining gap between Contex's vector side and plain dense comes from
 the node text format it embeds (`root | para_id: … | title: … | text: …`). That's about 3 points on
 SciFact and 2–3 on HotpotQA.
 
