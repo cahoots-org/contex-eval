@@ -26,3 +26,15 @@ def test_publish_subscribe_read_and_query_roundtrip():
             with pytest.raises(RuntimeError, match="contex://subscriptions/nope"):
                 await c.read_bundle("contex://subscriptions/nope")
     asyncio.run(go())
+
+@pytest.mark.integration
+def test_listen_receives_a_push_after_publish():
+    async def go():
+        async with ContexSession(project_id=f"nd-{uuid.uuid4().hex[:8]}") as c:
+            uri = await c.subscribe("news about volcanoes", top_k=10, max_age_seconds=3600)
+            async with c.listen([uri]) as events:
+                await c.publish_batch([{"data_key": "v1", "data": "Volcano erupts\n\nLava flows.",
+                                        "data_format": "text", "published_at": None}])
+                event = await asyncio.wait_for(anext(aiter(events)), timeout=30)
+            assert event.uri == uri and await c.read_bundle(uri) == ["v1"]
+    asyncio.run(go())

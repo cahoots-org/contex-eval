@@ -1,7 +1,7 @@
 import asyncio
 import json
 from contextlib import AsyncExitStack
-from mcp import ClientSession
+from mcp import Client, ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from .config import CONTEX_MCP_URL, CONTEX_PROJECT_ID
 
@@ -76,10 +76,10 @@ class ContexSession:
         self.project_id = project_id
 
     async def __aenter__(self):
+        # mcp.Client negotiates the 2026-07-28 protocol, which subscriptions/listen requires.
+        # cache=None: bundle reads must never be served from a client-side cache.
         self._stack = AsyncExitStack()
-        read, write = await self._stack.enter_async_context(streamable_http_client(self.url))
-        self.s = await self._stack.enter_async_context(ClientSession(read, write))
-        await self.s.initialize()
+        self.s = await self._stack.enter_async_context(Client(self.url, cache=None))
         return self
 
     async def __aexit__(self, *exc):
@@ -111,3 +111,8 @@ class ContexSession:
         return doc_ids(json.loads(await self._call("contex_query", {
             "query": need, "top_k": top_k, "threshold": 0.0, "max_age_seconds": max_age_seconds,
         }))["matches"])
+
+    def listen(self, uris: list[str]):
+        """Async context manager over a subscriptions/listen stream; iterate it for events
+        carrying ``.uri``. Contex coalesces repeat events for one URI."""
+        return self.s.listen(resource_subscriptions=list(uris))
