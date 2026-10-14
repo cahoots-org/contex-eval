@@ -169,3 +169,23 @@ New code only. It reuses `contex_client`, `agent`, `retrievers`, `scoring`, `tok
   arm64. This decides S and whether T2 fits.
 - **Fallback window.** If W = 3 days misses most follow-ups at T0, try W = 1, which is a "today
   only" briefing.
+
+## 11. Addendum (2026-10-14): push vs pull at equal freshness
+
+The T1 runs read every subscription once per simulated day. That is pull, and it is not how
+Contex is meant to be used: an agent listens on its subscription resource (`subscriptions/listen`)
+and Contex pushes `resources/updated` when the bundle changes. The agent reads only after a push.
+The right comparison is the cost of staying as fresh as push.
+
+- **Trickle.** Each simulated day's articles are published in 6 batches spread over the first 80%
+  of the day slot. Articles keep their day-level `published_at`, so windows are unchanged.
+- **contex-push.** One listen stream carries every subscription URI. On each event the agent reads
+  that bundle and holds it. A read that finds the subscription expired re-creates it (same arguments
+  give the same URI). Listening does not renew the lease; only reads do, so quiet stories can expire.
+- **contex-pull, every k batches.** Each agent calls `contex_query` after every k-th batch and holds
+  the result: k = 1 (6 per day, matching push freshness), 3 (2 per day), 6 (once per day).
+- **Metrics.** Delivery lag (gold article publish → first held bundle containing it), recall@10 of
+  what each agent holds at 0.9·S each day, server CPU, and agent-side searches or reads.
+- **Slice.** 14 days from 2018-03-18, every story with gold in the slice, S = 300 s (batch interval
+  40 s, enough for a 338-agent pull round). Local dense is not re-run: its recall is known from T1,
+  and its cost is harness-side.
