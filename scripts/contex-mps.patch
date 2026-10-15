@@ -1,0 +1,55 @@
+diff --git a/src/core/embedder.py b/src/core/embedder.py
+index 7da937c..5e1411b 100644
+--- a/src/core/embedder.py
++++ b/src/core/embedder.py
+@@ -62,3 +62,27 @@ class OnnxEmbedder:
+         hidden = self.session.run(None, feed)[0]
+         pooled = (hidden * mask[..., None]).sum(axis=1) / mask.sum(axis=1, keepdims=True)
+         return (pooled / np.linalg.norm(pooled, axis=1, keepdims=True)).astype(np.float32)
++
++
++class TorchEmbedder:
++    """contexeval local patch: the same model via sentence-transformers on a torch device
++    (e.g. CONTEX_EMBED_DEVICE=mps), with OnnxEmbedder's truncation, pooling and normalization."""
++
++    def __init__(self, model_name: str, device: str):
++        from sentence_transformers import SentenceTransformer
++        self.model = SentenceTransformer(model_name, device=device)
++        self.model.max_seq_length = MAX_SEQ_LENGTH
++        # Contex encodes from worker threads (encode_async); MPS is not thread-safe.
++        import threading
++        self._lock = threading.Lock()
++
++    def get_sentence_embedding_dimension(self) -> int:
++        return self.model.get_sentence_embedding_dimension()
++
++    def encode(self, texts: Union[str, List[str]], batch_size: int = 32) -> np.ndarray:
++        if isinstance(texts, str):
++            return self.encode([texts], batch_size)[0]
++        with self._lock:
++            return self.model.encode([t[:MAX_EMBED_CHARS] for t in texts], batch_size=batch_size,
++                                     normalize_embeddings=True, convert_to_numpy=True,
++                                     show_progress_bar=False).astype(np.float32)
+diff --git a/src/core/semantic_matcher.py b/src/core/semantic_matcher.py
+index 1421e70..62e2d03 100644
+--- a/src/core/semantic_matcher.py
++++ b/src/core/semantic_matcher.py
+@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, insert as pg_insert
+ 
+ from src.core.database import DatabaseManager
+ from src.core.db_models import Embedding, Symbol
+-from src.core.embedder import OnnxEmbedder, encode_async
++from src.core.embedder import OnnxEmbedder, TorchEmbedder, encode_async
+ from src.core.hybrid_search_service import HybridSearchService
+ from src.core.limits import positive_int_env
+ from src.core.lexical_search import PgFtsLexical
+@@ -36,7 +36,8 @@ def _load_model(model_name: str) -> OnnxEmbedder:
+     model = _MODEL_CACHE.get(model_name)
+     if model is None:
+         logger.info("Loading embedding model", model_name=model_name)
+-        model = OnnxEmbedder(model_name)
++        device = os.getenv("CONTEX_EMBED_DEVICE")  # contexeval local patch
++        model = TorchEmbedder(model_name, device) if device else OnnxEmbedder(model_name)
+         _MODEL_CACHE[model_name] = model
+     return model
+ 

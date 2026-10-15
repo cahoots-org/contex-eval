@@ -11,3 +11,5 @@ data/pr_curve.png
 .DS_Store
 contex/
 *.egg-info/
+data/wcep/
+.superpowers/
