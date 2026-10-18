@@ -11,10 +11,10 @@ SYSTEM = (
 )
 
 
-def build_prompt(context_text: str, question: str) -> list[dict]:
+def build_prompt(context_text: str, question: str, system: str = SYSTEM) -> list[dict]:
     """Build a chat-format prompt with context and question."""
     return [
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": system},
         {
             "role": "user",
             "content": f"Context:\n{context_text}\n\nQuestion: {question}\nAnswer:",
@@ -46,9 +46,9 @@ class AnswerAgent:
         except Exception:
             pass  # Server may not be up; warmup is optional
 
-    def answer(self, context_text: str, question: str) -> AnswerResult:
+    def answer(self, context_text: str, question: str, system: str = SYSTEM) -> AnswerResult:
         """Get an answer from the agent given context and question."""
-        prompt = build_prompt(context_text, question)
+        prompt = build_prompt(context_text, question, system)
         response = self.client.chat.completions.create(
             model=self.model,
             messages=prompt,
@@ -59,4 +59,29 @@ class AnswerAgent:
             text=response.choices[0].message.content.strip(),
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
+        )
+
+
+class MlxAgent:
+    """Same contract as AnswerAgent, but runs mlx-lm in-process (no HTTP server).
+
+    mlx_lm.server 0.31.x accepted connections but never answered on this machine; the model
+    itself generates fine in-process. Greedy decoding (mlx default) == temperature 0.
+    """
+    def __init__(self):
+        from mlx_lm import load
+        self.model, self.tokenizer = load(AGENT_MODEL)
+
+    def warmup(self):
+        self.answer("", "Hi.")
+
+    def answer(self, context_text: str, question: str, system: str = SYSTEM) -> AnswerResult:
+        from mlx_lm import generate
+        prompt = self.tokenizer.apply_chat_template(
+            build_prompt(context_text, question, system), add_generation_prompt=True, tokenize=False)
+        text = generate(self.model, self.tokenizer, prompt=prompt, max_tokens=256)
+        return AnswerResult(
+            text=text.strip(),
+            prompt_tokens=len(self.tokenizer.encode(prompt)),
+            completion_tokens=len(self.tokenizer.encode(text)),
         )

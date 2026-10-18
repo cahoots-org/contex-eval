@@ -8,10 +8,9 @@ is unlikely to be sampling noise.
 Usage: python scripts/analyze.py
 """
 import json
-import random
 from collections import defaultdict
 
-random.seed(13)  # reproducible bootstrap
+from contexeval.stats import boot_ci
 
 RESULTS = "data/results.jsonl"
 METHODS = ["contex", "bm25", "dense"]
@@ -25,17 +24,6 @@ def load():
         if "error" not in r:
             by[r["method"]][r["qid"]] = r
     return by
-
-
-def boot_ci(diffs, n=10000):
-    if not diffs:
-        return (None, None)
-    means = []
-    for _ in range(n):
-        s = [random.choice(diffs) for _ in diffs]
-        means.append(sum(s) / len(s))
-    means.sort()
-    return means[int(0.025 * n)], means[int(0.975 * n)]
 
 
 def main():

@@ -28,7 +28,7 @@ def pool_examples(examples: list[dict]) -> tuple[list[dict], list[dict]]:
 
 def main(n: int, out_corpus=CORPUS_PATH, out_questions=QUESTIONS_PATH):
     from datasets import load_dataset
-    ds = load_dataset("hotpot_qa", "distractor", split="validation")
+    ds = load_dataset("hotpotqa/hotpot_qa", "distractor", split="validation")
     ds = ds.shuffle(seed=SEED).select(range(n))
     corpus, questions = pool_examples(list(ds))
     DATA_DIR.mkdir(parents=True, exist_ok=True)
